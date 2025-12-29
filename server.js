@@ -125,8 +125,13 @@ app.post("/save", async (req, res) => {
   }
 });
 
+app.get("/hi", (req, res) => {
+    res.status(200).json({message: "hi"});
+})
+
 /* ===================== START ===================== */
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
 });
+
