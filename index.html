@@ -5,51 +5,323 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SIG-IP Quiz</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        #quiz-container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); width: 90%; max-width: 500px; text-align: center; }
-        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0f172a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        #quiz-container {
+            background: #ffffff;
+            padding: 45px;
+            border-radius: 20px;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+            width: 100%;
+            max-width: 550px;
+            text-align: center;
+            animation: slideUp 0.6s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        h2 {
+            color: #1e293b;
+            margin-bottom: 12px;
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        h3 {
+            color: #334155;
+            margin: 20px 0;
+            font-size: 20px;
+            line-height: 1.6;
+            font-weight: 600;
+        }
+
+        p {
+            color: #64748b;
+            margin-bottom: 20px;
+            font-size: 15px;
+            font-weight: 500;
+        }
+
         /* Input Styling */
-        input { width: 80%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; }
-        .primary-btn { background: #007bff; color: white; border: none; padding: 12px 25px; border-radius: 6px; cursor: pointer; font-size: 16px; width: 85%; }
-        
-        .option-btn { display: block; width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 6px; background: #fff; cursor: pointer; text-align: left; }
-        .selected { background-color: #007bff !important; color: white; }
-        #next-btn { background: #28a745; color: white; border: none; padding: 10px 25px; border-radius: 5px; cursor: pointer; margin-top: 20px; display: none; }
-        .hidden { display: none; }
-        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        input {
+            width: 100%;
+            padding: 14px 16px;
+            margin: 10px 0;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 15px;
+            transition: all 0.3s ease;
+            background: #f8fafc;
+            color: #1e293b;
+            font-weight: 500;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            background: #ffffff;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        input::placeholder {
+            color: #94a3b8;
+            font-weight: 500;
+        }
+
+        /* Button Styling */
+        .primary-btn {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 14px 24px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            width: 100%;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+        }
+
+        .primary-btn:hover {
+            background: #2563eb;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(59, 130, 246, 0.35);
+        }
+
+        .primary-btn:active {
+            transform: translateY(0);
+        }
+
+        /* Option Button Styling */
+        .option-btn {
+            display: block;
+            width: 100%;
+            padding: 16px 18px;
+            margin: 10px 0;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            background: #f8fafc;
+            cursor: pointer;
+            text-align: left;
+            font-size: 15px;
+            color: #334155;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+
+        .option-btn:hover {
+            border-color: #3b82f6;
+            background: #eff6ff;
+            transform: translateX(4px);
+        }
+
+        .option-btn:active {
+            transform: translateX(2px);
+        }
+
+        .selected {
+            background: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+        }
+
+        #next-btn {
+            background: #10b981;
+            color: white;
+            border: none;
+            padding: 14px 24px;
+            border-radius: 10px;
+            cursor: pointer;
+            margin-top: 25px;
+            display: none;
+            font-size: 15px;
+            font-weight: 600;
+            width: 100%;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
+        }
+
+        #next-btn:hover {
+            background: #059669;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(16, 185, 129, 0.35);
+        }
+
+        #next-btn:active {
+            transform: translateY(0);
+        }
+
+        #next-btn.show {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* Loader Styling */
+        .loader {
+            border: 4px solid #e2e8f0;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 45px;
+            height: 45px;
+            animation: spin 0.8s linear infinite;
+            margin: 25px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Screen-specific styling */
+        #registration-screen h2 {
+            margin-bottom: 8px;
+        }
+
+        #registration-screen > p {
+            margin-bottom: 30px;
+        }
+
+        #result-screen h2 {
+            margin-bottom: 20px;
+        }
+
+        #score-text {
+            font-size: 52px;
+            font-weight: 700;
+            color: #10b981;
+            margin: 25px 0;
+            animation: slideUp 0.6s ease-out;
+        }
+
+        #setup-screen {
+            padding: 40px 20px;
+        }
+
+        #setup-screen p {
+            font-size: 16px;
+            margin-bottom: 15px;
+        }
+
+        /* Question counter */
+        #question-counter {
+            font-size: 12px;
+            color: #94a3b8;
+            margin-bottom: 15px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 600px) {
+            #quiz-container {
+                padding: 30px 20px;
+                border-radius: 16px;
+            }
+
+            h2 {
+                font-size: 28px;
+            }
+
+            h3 {
+                font-size: 18px;
+            }
+
+            input, .option-btn, .primary-btn, #next-btn {
+                padding: 12px 14px;
+                font-size: 14px;
+            }
+
+            #score-text {
+                font-size: 40px;
+            }
+        }
+
+        /* Accessibility improvements */
+        .primary-btn:focus, #next-btn:focus, .option-btn:focus, input:focus {
+            outline: 2px solid #3b82f6;
+            outline-offset: 2px;
+        }
+
+        /* Screen animations */
+        #registration-screen, #setup-screen, #quiz-screen, #result-screen {
+            animation: slideUp 0.4s ease-out;
+        }
     </style>
 </head>
 <body>
+    <div id="quiz-container">
+        <div id="registration-screen">
+            <h2>SIG-IP Quiz</h2>
+            <p>Enter your details to begin</p>
+            <input type="text" id="student-name" placeholder="Full Name" required>
+            <input type="text" id="student-roll" placeholder="Roll Number" required>
+            <button class="primary-btn" onclick="startQuizProcess()">Start Quiz</button>
+        </div>
 
-<div id="quiz-container">
-    <div id="registration-screen">
-        <h2>Student Entry</h2>
-        <input type="text" id="student-name" placeholder="Enter Full Name" required>
-        <input type="text" id="student-roll" placeholder="Enter Roll Number" required>
-        <button class="primary-btn" onclick="startQuizProcess()">Start Quiz</button>
+        <div id="setup-screen" class="hidden">
+            <h2>SIG-IP Quiz</h2>
+            <p>Generating questions...</p>
+            <div class="loader"></div>
+        </div>
+
+        <div id="quiz-screen" class="hidden">
+            <div id="question-counter"></div>
+            <h3 id="question-text"></h3>
+            <div id="options-container"></div>
+            <button id="next-btn" onclick="nextQuestion()">Next Question</button>
+        </div>
+
+        <div id="result-screen" class="hidden">
+            <h2>Quiz Completed</h2>
+            <p>Your Score</p>
+            <p id="score-text"></p>
+            <button onclick="location.reload()" class="primary-btn">Restart Quiz</button>
+        </div>
     </div>
 
-    <div id="setup-screen" class="hidden">
-        <h2>SIG-IP Quiz</h2>
-        <p>Generating questions...</p>
-        <div class="loader"></div>
-    </div>
-
-    <div id="quiz-screen" class="hidden">
-        <h3 id="question-text"></h3>
-        <div id="options-container"></div>
-        <button id="next-btn" onclick="nextQuestion()">Next Question</button>
-    </div>
-
-    <div id="result-screen" class="hidden">
-        <h2>Quiz Completed!</h2>
-        <p id="score-text" style="font-size: 24px; font-weight: bold;"></p>
-        <button onclick="location.reload()" class="primary-btn" style="width: auto;">Restart</button>
-    </div>
-</div>
-
-<script src="script.js"></script>
+    <script src="script.js"></script>
 </body>
-
 </html>
