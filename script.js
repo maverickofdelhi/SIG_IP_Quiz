@@ -130,7 +130,7 @@ async function showResults() {
   };
 
   try {
-    await fetch("http://localhost:5000/save", {
+    await fetch("https://sig-ip-quiz.onrender.com/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -140,4 +140,5 @@ async function showResults() {
     console.warn("Local server not running");
   }
 }
+
 
