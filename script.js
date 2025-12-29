@@ -26,7 +26,7 @@ function startQuizProcess() {
 /* ===================== STEP 2: GEMINI QUIZ ===================== */
 async function generateQuiz() {
   try {
-    const response = await fetch("http://localhost:5000/generate-quiz", {
+    const response = await fetch("https://sig-ip-quiz.onrender.com/generate-quiz", {
   method: "POST",
   headers: { "Content-Type": "application/json" }
 });
@@ -140,3 +140,4 @@ async function showResults() {
     console.warn("Local server not running");
   }
 }
+
