@@ -289,9 +289,36 @@
         #registration-screen, #setup-screen, #quiz-screen, #result-screen {
             animation: slideUp 0.4s ease-out;
         }
+        #header {
+            width: 100%;
+            height: 100px;
+            display: flex;
+            padding-left: 15px;
+            padding-right: 15px;
+            padding-top: 5px;
+            justify-content: space-between;
+            position: absolute;
+            top: 0;
+        }
+        #x, #y {
+            width: 100px;
+            height: 100%;
+        }
+        #z, #zz {
+            height: 100%;
+        }
     </style>
 </head>
 <body>
+    <div id="header">
+        <div id="x">
+            <img src="image2.png" id="zz" alt="">
+            
+        </div>
+        <div id="y">
+            <img src="file1.png" id="z" alt="">
+        </div>
+    </div>
     <div id="quiz-container">
         <div id="registration-screen">
             <h2>SIG-IP Quiz</h2>
