@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Finance Quiz</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        #quiz-container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); width: 90%; max-width: 500px; text-align: center; }
+        
+        /* Input Styling */
+        input { width: 80%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; }
+        .primary-btn { background: #007bff; color: white; border: none; padding: 12px 25px; border-radius: 6px; cursor: pointer; font-size: 16px; width: 85%; }
+        
+        .option-btn { display: block; width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 6px; background: #fff; cursor: pointer; text-align: left; }
+        .selected { background-color: #007bff !important; color: white; }
+        #next-btn { background: #28a745; color: white; border: none; padding: 10px 25px; border-radius: 5px; cursor: pointer; margin-top: 20px; display: none; }
+        .hidden { display: none; }
+        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<div id="quiz-container">
+    <div id="registration-screen">
+        <h2>Student Entry</h2>
+        <input type="text" id="student-name" placeholder="Enter Full Name" required>
+        <input type="text" id="student-roll" placeholder="Enter Roll Number" required>
+        <button class="primary-btn" onclick="startQuizProcess()">Start Quiz</button>
+    </div>
+
+    <div id="setup-screen" class="hidden">
+        <h2>AI Quiz Generator</h2>
+        <p>Generating finance questions...</p>
+        <div class="loader"></div>
+    </div>
+
+    <div id="quiz-screen" class="hidden">
+        <h3 id="question-text"></h3>
+        <div id="options-container"></div>
+        <button id="next-btn" onclick="nextQuestion()">Next Question</button>
+    </div>
+
+    <div id="result-screen" class="hidden">
+        <h2>Quiz Completed!</h2>
+        <p id="score-text" style="font-size: 24px; font-weight: bold;"></p>
+        <button onclick="location.reload()" class="primary-btn" style="width: auto;">Restart</button>
+    </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
