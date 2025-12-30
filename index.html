@@ -349,6 +349,108 @@
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <script>
+        let currentQuestion = 0;
+        let score = 0;
+        let selectedAnswer = null;
+        let questions = [];
+
+        const quizData = [
+            {
+                question: "What is the capital of France?",
+                options: ["London", "Berlin", "Paris", "Madrid"],
+                correct: 2
+            },
+            {
+                question: "Which planet is known as the Red Planet?",
+                options: ["Venus", "Mars", "Jupiter", "Saturn"],
+                correct: 1
+            },
+            {
+                question: "What is the largest ocean on Earth?",
+                options: ["Atlantic", "Indian", "Arctic", "Pacific"],
+                correct: 3
+            },
+            {
+                question: "Who wrote Romeo and Juliet?",
+                options: ["Jane Austen", "William Shakespeare", "Mark Twain", "Charles Dickens"],
+                correct: 1
+            },
+            {
+                question: "What is the smallest prime number?",
+                options: ["0", "1", "2", "3"],
+                correct: 2
+            }
+        ];
+
+        function startQuizProcess() {
+            const name = document.getElementById('student-name').value.trim();
+            const roll = document.getElementById('student-roll').value.trim();
+            
+            if (!name || !roll) {
+                alert('Please enter both name and roll number');
+                return;
+            }
+
+            document.getElementById('registration-screen').classList.add('hidden');
+            document.getElementById('setup-screen').classList.remove('hidden');
+
+            setTimeout(() => {
+                questions = quizData;
+                loadQuestion();
+                document.getElementById('setup-screen').classList.add('hidden');
+                document.getElementById('quiz-screen').classList.remove('hidden');
+            }, 2000);
+        }
+
+        function loadQuestion() {
+            const question = questions[currentQuestion];
+            const totalQuestions = questions.length;
+            
+            document.getElementById('question-counter').textContent = `Question ${currentQuestion + 1} of ${totalQuestions}`;
+            document.getElementById('question-text').textContent = `${currentQuestion + 1}. ${question.question}`;
+
+            const container = document.getElementById('options-container');
+            container.innerHTML = '';
+            selectedAnswer = null;
+            document.getElementById('next-btn').classList.remove('show');
+
+            question.options.forEach((option, index) => {
+                const btn = document.createElement('button');
+                btn.className = 'option-btn';
+                btn.textContent = option;
+                btn.onclick = () => selectAnswer(index);
+                container.appendChild(btn);
+            });
+        }
+
+        function selectAnswer(index) {
+            selectedAnswer = index;
+            const buttons = document.querySelectorAll('.option-btn');
+            buttons.forEach(btn => btn.classList.remove('selected'));
+            buttons[index].classList.add('selected');
+            document.getElementById('next-btn').classList.add('show');
+
+            if (index === questions[currentQuestion].correct) {
+                score++;
+            }
+        }
+
+        function nextQuestion() {
+            currentQuestion++;
+            if (currentQuestion < questions.length) {
+                loadQuestion();
+            } else {
+                showResults();
+            }
+        }
+
+        function showResults() {
+            document.getElementById('quiz-screen').classList.add('hidden');
+            document.getElementById('result-screen').classList.remove('hidden');
+            const percentage = (score / questions.length) * 100;
+            document.getElementById('score-text').textContent = `${score}/${questions.length} (${percentage.toFixed(1)}%)`;
+        }
+    </script>
 </body>
 </html>
