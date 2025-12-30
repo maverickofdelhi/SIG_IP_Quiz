@@ -2,7 +2,6 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
-const axios = require("axios");
 const { google } = require("googleapis");
 
 const app = express();
@@ -10,9 +9,6 @@ app.use(cors());
 app.use(express.json());
 
 /* ===================== ENV CHECK ===================== */
-if (!process.env.GEMINI_API_KEY) {
-  throw new Error("Missing GEMINI_API_KEY");
-}
 if (!process.env.SHEET_ID) {
   throw new Error("Missing SHEET_ID");
 }
@@ -28,63 +24,43 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: "v4", auth });
 
-/* ===================== GENERATE QUIZ ===================== */
+/* ===================== UTILS ===================== */
+function shuffleArray(arr) {
+  return arr.sort(() => Math.random() - 0.5);
+}
+
+function correctIndex(letter) {
+  return { A: 0, B: 1, C: 2, D: 3 }[letter];
+}
+
+/* ===================== GENERATE QUIZ FROM SHEET ===================== */
 app.post("/generate-quiz", async (req, res) => {
-  const prompt = `
-You are a JSON generator.
-Return ONLY valid JSON.
-No markdown.
-No explanation.
-
-Format:
-[
-  {
-    "question": "text",
-    "options": ["a", "b", "c", "d"],
-    "correct": 0
-  }
-]
-
-Create a 5-question finance quiz make the question diverse from corporate finance, risk management, derivatives, current affairs related to finance also some basic financial maths questions.
-`;
-
   try {
-    const geminiRes = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`,
-      {
-        contents: [{ parts: [{ text: prompt }] }]
-      },
-      {
-        params: { key: process.env.GEMINI_API_KEY },
-        headers: { "Content-Type": "application/json" },
-        timeout: 20000
-      }
-    );
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.QUES_SHEET_ID,
+      range: "Sheet1!A2:H" // skip header row
+    });
 
-    const rawText =
-      geminiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const rows = response.data.values;
 
-    if (!rawText) {
-      console.error("Empty Gemini response:", geminiRes.data);
-      return res.status(500).json({ error: "Empty Gemini response" });
+    if (!rows || rows.length === 0) {
+      return res.status(500).json({ error: "No questions found" });
     }
 
-    let quiz;
-    try {
-      quiz = JSON.parse(rawText);
-    } catch (e) {
-      console.error("Invalid JSON from Gemini:", rawText);
-      return res.status(500).json({ error: "Invalid quiz JSON" });
-    }
+    // Pick random 5 questions
+    const selected = shuffleArray(rows).slice(0, 5);
+
+    const quiz = selected.map(row => ({
+      question: row[2],
+      options: [row[3], row[4], row[5], row[6]],
+      correct: correctIndex(row[7])
+    }));
 
     res.json(quiz);
 
   } catch (err) {
-    console.error(
-      "Generate quiz error:",
-      err.response?.data || err.message
-    );
-    res.status(500).json({ error: "Quiz generation failed" });
+    console.error("Quiz fetch error:", err);
+    res.status(500).json({ error: "Failed to load quiz" });
   }
 });
 
@@ -113,26 +89,25 @@ app.post("/save", async (req, res) => {
   try {
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SHEET_ID,
-      range: "Sheet1!A:I",
+      range: "Results!A:I",
       valueInputOption: "USER_ENTERED",
       requestBody: { values: rows }
     });
 
     res.json({ status: "saved" });
   } catch (err) {
-    console.error("Sheet error:", err);
-    res.status(500).json({ error: "Sheet error" });
+    console.error("Sheet save error:", err);
+    res.status(500).json({ error: "Sheet save failed" });
   }
 });
 
+/* ===================== HEALTH CHECK ===================== */
 app.get("/hi", (req, res) => {
-    res.status(200).json({message: "hi"});
-})
+  res.json({ message: "hi" });
+});
 
 /* ===================== START ===================== */
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
 });
-
-
