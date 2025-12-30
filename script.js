@@ -1,4 +1,3 @@
-
 /* ===================== STATE ===================== */
 let studentName = "";
 let studentRoll = "";
@@ -6,6 +5,10 @@ let quizData = [];
 let currentIdx = 0;
 let score = 0;
 let quizDetails = [];
+
+/* ===================== TIMER ===================== */
+let timer = null;
+let timeLeft = 120; // 2 minutes per question
 
 /* ===================== STEP 1: START ===================== */
 function startQuizProcess() {
@@ -23,13 +26,16 @@ function startQuizProcess() {
   generateQuiz();
 }
 
-/* ===================== STEP 2: GEMINI QUIZ ===================== */
+/* ===================== STEP 2: FETCH QUIZ ===================== */
 async function generateQuiz() {
   try {
-    const response = await fetch("https://sig-ip-quiz.onrender.com/generate-quiz", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" }
-});
+    const response = await fetch(
+      "https://sig-ip-quiz.onrender.com/generate-quiz",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      }
+    );
 
     quizData = await response.json();
 
@@ -44,24 +50,40 @@ async function generateQuiz() {
 }
 
 /* ===================== STEP 3: LOAD QUESTION ===================== */
-console.log(document.getElementById("options"));
-
 function loadQuestion() {
   const questionText = document.getElementById("question-text");
   const optionsContainer = document.getElementById("options-container");
   const nextBtn = document.getElementById("next-btn");
-
-  if (!questionText || !optionsContainer) {
-    console.error("Quiz DOM elements missing");
-    return;
-  }
+  const timerEl = document.getElementById("timer");
 
   const q = quizData[currentIdx];
 
-  questionText.innerText = q.question;
+  // Question number + text
+  questionText.innerText =
+    `Question ${currentIdx + 1} of ${quizData.length}\n\n${q.question}`;
+
   optionsContainer.innerHTML = "";
   nextBtn.style.display = "none";
 
+  // Reset timer
+  clearInterval(timer);
+  timeLeft = 120;
+  timerEl.innerText = "Time left: 02:00";
+
+  timer = setInterval(() => {
+    timeLeft--;
+
+    const minutes = String(Math.floor(timeLeft / 60)).padStart(2, "0");
+    const seconds = String(timeLeft % 60).padStart(2, "0");
+    timerEl.innerText = `Time left: ${minutes}:${seconds}`;
+
+    if (timeLeft <= 0) {
+      clearInterval(timer);
+      autoSubmit();
+    }
+  }, 1000);
+
+  // Render options
   q.options.forEach((opt, idx) => {
     const btn = document.createElement("button");
     btn.className = "option-btn";
@@ -81,9 +103,30 @@ function loadQuestion() {
   });
 }
 
+/* ===================== AUTO SUBMIT (TIMEOUT) ===================== */
+function autoSubmit() {
+  const currentQ = quizData[currentIdx];
 
-/* ===================== STEP 4: NEXT ===================== */
+  quizDetails.push({
+    question: currentQ.question,
+    chosen: "Not Answered",
+    correct: currentQ.options[currentQ.correct],
+    status: "WRONG"
+  });
+
+  currentIdx++;
+
+  if (currentIdx < quizData.length) {
+    loadQuestion();
+  } else {
+    showResults();
+  }
+}
+
+/* ===================== STEP 4: NEXT QUESTION ===================== */
 function nextQuestion() {
+  clearInterval(timer);
+
   const selected = document.querySelector(".selected");
 
   if (!selected) {
@@ -115,12 +158,13 @@ function nextQuestion() {
 
 /* ===================== STEP 5: RESULTS ===================== */
 async function showResults() {
+  clearInterval(timer);
+
   document.getElementById("quiz-screen").classList.add("hidden");
   document.getElementById("result-screen").classList.remove("hidden");
 
-  document.getElementById(
-    "score-text"
-  ).innerText = `Score: ${score} / ${quizData.length}`;
+  document.getElementById("score-text").innerText =
+    `Score: ${score} / ${quizData.length}`;
 
   const payload = {
     name: studentName,
@@ -137,8 +181,6 @@ async function showResults() {
     });
     console.log("Results saved successfully");
   } catch {
-    console.warn("Local server not running");
+    console.warn("Failed to save results");
   }
 }
-
-
