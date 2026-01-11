@@ -8,7 +8,7 @@ let quizDetails = [];
 
 /* ===================== TIMER ===================== */
 let timer = null;
-let timeLeft = 120; // 2 minutes per question
+let timeLeft = 60; // 1 minute per question
 
 /* ===================== STEP 1: START ===================== */
 function startQuizProcess() {
@@ -67,8 +67,8 @@ function loadQuestion() {
 
   // Reset timer
   clearInterval(timer);
-  timeLeft = 120;
-  timerEl.innerText = "Time left: 02:00";
+  timeLeft = 60;
+  timerEl.innerText = "Time left: 01:00";
 
   timer = setInterval(() => {
     timeLeft--;
@@ -162,9 +162,6 @@ async function showResults() {
 
   document.getElementById("quiz-screen").classList.add("hidden");
   document.getElementById("result-screen").classList.remove("hidden");
-
-  document.getElementById("score-text").innerText =
-    `Score: ${score} / ${quizData.length}`;
 
   const payload = {
     name: studentName,
