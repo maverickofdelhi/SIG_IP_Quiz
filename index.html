@@ -227,14 +227,6 @@
             margin-bottom: 20px;
         }
 
-        #score-text {
-            font-size: 52px;
-            font-weight: 700;
-            color: #10b981;
-            margin: 25px 0;
-            animation: slideUp 0.6s ease-out;
-        }
-
         #setup-screen {
             padding: 40px 20px;
         }
@@ -272,10 +264,6 @@
             input, .option-btn, .primary-btn, #next-btn {
                 padding: 12px 14px;
                 font-size: 14px;
-            }
-
-            #score-text {
-                font-size: 40px;
             }
         }
 
@@ -343,9 +331,8 @@
         </div>
 
         <div id="result-screen" class="hidden">
-            <h2>Quiz Completed</h2>
-            <p>Your Score</p>
-            <p id="score-text"></p>
+            <h2>Thank You!</h2>
+            <p>Your responses have been recorded</p>
             <button onclick="location.reload()" class="primary-btn">Restart Quiz</button>
         </div>
     </div>
@@ -353,4 +340,3 @@
     <script src="script.js"></script>
 </body>
 </html>
-
