@@ -1,24 +1,59 @@
 require("dotenv").config();
-
 const express = require("express");
 const cors = require("cors");
 const { google } = require("googleapis");
+const rateLimit = require("express-rate-limit"); // NEW
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-/* ===================== ENV CHECK ===================== */
-if (!process.env.SHEET_ID || !process.env.GOOGLE_SERVICE_ACCOUNT) {
-  throw new Error("Missing Env Variables");
+/* ===================== SECURITY: RATE LIMITING ===================== */
+// Prevents one person from spamming the server
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per window
+  message: { error: "Too many requests, please try again later." }
+});
+
+// Strict limit for quiz starting/saving (5 times per minute)
+const quizLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 5,
+  message: { error: "Slow down! Too many quiz attempts detected." }
+});
+
+app.use("/generate-quiz", quizLimiter);
+app.use("/save", quizLimiter);
+app.use(globalLimiter);
+
+/* ===================== SIMPLE MEMORY CACHE ===================== */
+// Stores the "Attempts" sheet in memory for 2 minutes 
+// so we don't hit Google's API limit every time a roll is checked.
+let attemptsCache = null;
+let lastCacheUpdate = 0;
+
+async function getAttempts() {
+  const now = Date.now();
+  if (attemptsCache && (now - lastCacheUpdate < 120000)) { // 2 minutes
+    return attemptsCache;
+  }
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.SHEET_ID,
+    range: "Attempts!A:B"
+  });
+  
+  attemptsCache = response.data.values || [];
+  lastCacheUpdate = now;
+  return attemptsCache;
 }
 
-/* ===================== GOOGLE SHEETS ===================== */
+/* ===================== GOOGLE SHEETS SETUP ===================== */
 const auth = new google.auth.GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT),
   scopes: ["https://www.googleapis.com/auth/spreadsheets"]
 });
-
 const sheets = google.sheets({ version: "v4", auth });
 
 /* ===================== UTILS ===================== */
@@ -30,62 +65,29 @@ function correctIndex(letter) {
   return { A: 0, B: 1, C: 2, D: 3 }[letter];
 }
 
-/* ===================== CHECK PREVIOUS ATTEMPTS ===================== */
+/* ===================== CHECK ROLL (WITH CACHE) ===================== */
 app.get("/check-roll/:roll", async (req, res) => {
-  // 1. Clean the incoming roll number (remove spaces)
-  const rollToCheck = String(req.params.roll).trim();
-
+  const { roll } = req.params;
   try {
-    // 2. Fetch data from Attempts sheet
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.SHEET_ID,
-      range: "Attempts!A:B" // Reading Roll and Timestamp
-    });
-
-    const rows = response.data.values;
-    
-    // If empty sheet, allow
-    if (!rows || rows.length <= 1) {
-      return res.json({ allowed: true });
-    }
+    const rows = await getAttempts(); // Uses Cache
+    if (rows.length <= 1) return res.json({ allowed: true });
 
     const tenHoursInMs = 10 * 60 * 60 * 1000;
     const now = Date.now();
 
-    // 3. Find the last attempt
-    // We reverse to find the most recent one first
-    const lastAttempt = [...rows].reverse().find(row => {
-      // CLEAN DATA FROM SHEET: Remove single quotes (') and spaces
-      const sheetRoll = String(row[0]).replace(/'/g, "").trim(); 
-      return sheetRoll === rollToCheck;
-    });
+    const lastAttempt = [...rows].reverse().find(row => row[0] === roll);
 
-    if (lastAttempt) {
-      // 4. Parse the ISO Date
-      const lastTimeStr = lastAttempt[1]; // Column B
-      const attemptTime = new Date(lastTimeStr).getTime();
-
-      console.log(`Checking Roll: ${rollToCheck} | Found: ${lastTimeStr} | Diff: ${(now - attemptTime)/1000/60} mins`);
-
-      if (isNaN(attemptTime)) {
-        // If date is invalid, assume safe to prevent locking out valid users, 
-        // OR block if you want strict security. currently allowing.
-        console.error("Invalid Date found in sheet:", lastTimeStr);
-        return res.json({ allowed: true }); 
-      }
-      
+    if (lastAttempt && lastAttempt[1]) {
+      const attemptTime = new Date(lastAttempt[1]).getTime();
       if (now - attemptTime < tenHoursInMs) {
         return res.json({ 
           allowed: false, 
-          message: `You have already attempted the quiz. Please try again after 10 hours.` 
+          message: "You have already attempted the quiz. Please try again after 10 hours." 
         });
       }
     }
-
     res.json({ allowed: true });
-
   } catch (err) {
-    console.error("Check roll error:", err);
     res.status(500).json({ error: "Validation failed" });
   }
 });
@@ -97,7 +99,6 @@ app.post("/generate-quiz", async (req, res) => {
       spreadsheetId: process.env.QUES_SHEET_ID,
       range: "Sheet1!A2:H" 
     });
-
     const rows = response.data.values;
     if (!rows || rows.length === 0) return res.status(500).json({ error: "No questions found" });
 
@@ -107,7 +108,6 @@ app.post("/generate-quiz", async (req, res) => {
       options: [row[3], row[4], row[5], row[6]],
       correct: correctIndex(row[7])
     }));
-
     res.json(quiz);
   } catch (err) {
     res.status(500).json({ error: "Failed to load quiz" });
@@ -117,24 +117,20 @@ app.post("/generate-quiz", async (req, res) => {
 /* ===================== SAVE RESULTS ===================== */
 app.post("/save", async (req, res) => {
   const { name, roll, score, details, timeTaken } = req.body;
-
   if (!name || !roll || !score || !Array.isArray(details)) {
     return res.status(400).json({ error: "Invalid payload" });
   }
 
-  // FIX: Use ISO String for safe machine parsing
-  const timestamp = new Date().toISOString(); 
-
+  const timestamp = new Date().toLocaleString();
   const resultRows = details.map((d, i) => [
-    timestamp, name, `'${roll}`, score, i + 1, d.question, d.chosen, d.correct, d.status
+    timestamp, name, roll, score, i + 1, d.question, d.chosen, d.correct, d.status
   ]);
-
-  // Attempts Sheet: Roll, Timestamp, TimeTaken
-  // We add ' before roll to force it as text in sheets
-  const attemptRow = [[`'${roll}`, timestamp, timeTaken]];
+  const attemptRow = [[roll, timestamp, timeTaken]];
 
   try {
-    // 1. Save detailed results
+    // Clear cache so the next check-roll is accurate
+    attemptsCache = null; 
+
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SHEET_ID,
       range: "Sheet1!A:I",
@@ -142,23 +138,20 @@ app.post("/save", async (req, res) => {
       requestBody: { values: resultRows }
     });
 
-    // 2. Save Attempt Log (For the cooldown check)
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SHEET_ID,
-      range: "Attempts!A:C", // Writes to A (Roll), B (Time), C (Duration)
+      range: "Attempts!A:C",
       valueInputOption: "USER_ENTERED",
       requestBody: { values: attemptRow }
     });
 
     res.json({ status: "saved" });
   } catch (err) {
-    console.error("Sheet save error:", err);
     res.status(500).json({ error: "Sheet save failed" });
   }
 });
 
-/* ===================== START ===================== */
+app.get("/hi", (req, res) => res.json({ message: "hi" }));
+
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on ${PORT}`));
