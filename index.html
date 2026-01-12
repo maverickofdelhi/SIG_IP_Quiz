@@ -87,11 +87,6 @@
             box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
         }
 
-        input::placeholder {
-            color: #94a3b8;
-            font-weight: 500;
-        }
-
         /* Button Styling */
         .primary-btn {
             background: #3b82f6;
@@ -111,14 +106,8 @@
         .primary-btn:hover {
             background: #2563eb;
             transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(59, 130, 246, 0.35);
         }
 
-        .primary-btn:active {
-            transform: translateY(0);
-        }
-
-        /* Option Button Styling */
         .option-btn {
             display: block;
             width: 100%;
@@ -141,15 +130,10 @@
             transform: translateX(4px);
         }
 
-        .option-btn:active {
-            transform: translateX(2px);
-        }
-
         .selected {
-            background: #3b82f6;
-            color: white;
-            border-color: #3b82f6;
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+            background: #3b82f6 !important;
+            color: white !important;
+            border-color: #3b82f6 !important;
         }
 
         #next-btn {
@@ -165,40 +149,12 @@
             font-weight: 600;
             width: 100%;
             transition: all 0.3s ease;
-            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
-        }
-
-        #next-btn:hover {
-            background: #059669;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(16, 185, 129, 0.35);
-        }
-
-        #next-btn:active {
-            transform: translateY(0);
-        }
-
-        #next-btn.show {
-            display: block;
-            animation: fadeIn 0.3s ease;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
         }
 
         .hidden {
             display: none;
         }
 
-        /* Loader Styling */
         .loader {
             border: 4px solid #e2e8f0;
             border-top: 4px solid #3b82f6;
@@ -214,116 +170,42 @@
             100% { transform: rotate(360deg); }
         }
 
-        /* Screen-specific styling */
-        #registration-screen h2 {
-            margin-bottom: 8px;
-        }
-
-        #registration-screen > p {
-            margin-bottom: 30px;
-        }
-
-        #result-screen h2 {
-            margin-bottom: 20px;
-        }
-
-        #setup-screen {
-            padding: 40px 20px;
-        }
-
-        #setup-screen p {
-            font-size: 16px;
-            margin-bottom: 15px;
-        }
-
-        /* Question counter */
-        #question-counter {
-            font-size: 12px;
-            color: #94a3b8;
-            margin-bottom: 15px;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-            text-transform: uppercase;
-        }
-
-        /* Responsive Design */
-        @media (max-width: 600px) {
-            #quiz-container {
-                padding: 30px 20px;
-                border-radius: 16px;
-            }
-
-            h2 {
-                font-size: 28px;
-            }
-
-            h3 {
-                font-size: 18px;
-            }
-
-            input, .option-btn, .primary-btn, #next-btn {
-                padding: 12px 14px;
-                font-size: 14px;
-            }
-        }
-
-        /* Accessibility improvements */
-        .primary-btn:focus, #next-btn:focus, .option-btn:focus, input:focus {
-            outline: 2px solid #3b82f6;
-            outline-offset: 2px;
-        }
-
-        /* Screen animations */
-        #registration-screen, #setup-screen, #quiz-screen, #result-screen {
-            animation: slideUp 0.4s ease-out;
-        }
         #header {
             width: 100%;
             height: 100px;
             display: flex;
-            padding-left: 15px;
-            padding-right: 15px;
-            padding-top: 5px;
+            padding: 5px 15px 0 15px;
             justify-content: space-between;
             position: absolute;
             top: 0;
         }
-        #x, #y {
-            width: 100px;
-            height: 100%;
-        }
-        #z, #zz {
-            height: 100%;
-        }
+        
+        #zz, #z { height: 100%; }
     </style>
 </head>
 <body>
     <div id="header">
-        <div id="x">
-            <img src="image2.png" id="zz" alt="">
-            
-        </div>
-        <div id="y">
-            <img src="file1.png" id="z" alt="">
-        </div>
+        <div id="x"><img src="image2.png" id="zz" alt=""></div>
+        <div id="y"><img src="file1.png" id="z" alt=""></div>
     </div>
+
     <div id="quiz-container">
         <div id="registration-screen">
             <h2>SIG-IP Quiz</h2>
             <p>Enter your details to begin</p>
             <input type="text" id="student-name" placeholder="Full Name" required>
             <input type="text" id="student-roll" placeholder="Roll Number" required>
-            <button class="primary-btn" onclick="startQuizProcess()">Start Quiz</button>
+            <button class="primary-btn" id="start-btn" onclick="startQuizProcess()">Start Quiz</button>
         </div>
 
         <div id="setup-screen" class="hidden">
             <h2>SIG-IP Quiz</h2>
-            <p>Generating questions...</p>
+            <p id="setup-text">Verifying your details...</p>
             <div class="loader"></div>
         </div>
 
         <div id="quiz-screen" class="hidden">
-            <p id="timer" style="font-weight:bold; color:#d9534f;"></p>
+            <p id="timer" style="font-weight:bold; color:#d9534f; margin-bottom: 10px;"></p>
             <div id="question-counter"></div>
             <h3 id="question-text"></h3>
             <div id="options-container"></div>
@@ -332,7 +214,7 @@
 
         <div id="result-screen" class="hidden">
             <h2>Thank You!</h2>
-            <p>Your responses have been recorded</p>
+            <p>Your responses have been recorded.</p>
             <button onclick="location.reload()" class="primary-btn">Restart Quiz</button>
         </div>
     </div>
