@@ -1,5 +1,5 @@
 /* ===================== CONFIG ===================== */
-// CHANGE THIS URL to your actual Render backend URL
+// I have put your exact URL here so you don't need to change it
 const BASE_URL = "https://sig-ip-quiz.onrender.com"; 
 
 /* ===================== STATE ===================== */
