@@ -33,6 +33,82 @@ function correctIndex(letter) {
   return { A: 0, B: 1, C: 2, D: 3 }[letter];
 }
 
+/* ===================== CHECK IF ROLL NUMBER ATTEMPTED ===================== */
+app.post("/check-attempt", async (req, res) => {
+  const { roll } = req.body;
+
+  if (!roll) {
+    return res.status(400).json({ error: "Roll number required" });
+  }
+
+  try {
+    // Fetch all attempts from Attempts sheet
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SHEET_ID,
+      range: "Attempts!A:C" // Columns: Roll, Timestamp, ExpiryTime
+    });
+
+    const rows = response.data.values || [];
+    
+    // Skip header row and check for this roll number
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (row[0] === roll) {
+        const expiryTime = new Date(row[2]);
+        const now = new Date();
+
+        // If attempt is still within 10 hours
+        if (now < expiryTime) {
+          const hoursLeft = Math.ceil((expiryTime - now) / (1000 * 60 * 60));
+          return res.json({ 
+            canAttempt: false, 
+            message: `You have already attempted this quiz. Please try again after ${hoursLeft} hour(s).`,
+            expiryTime: expiryTime.toLocaleString()
+          });
+        }
+      }
+    }
+
+    // No active attempt found
+    res.json({ canAttempt: true });
+  } catch (err) {
+    console.error("Check attempt error:", err);
+    res.status(500).json({ error: "Failed to check attempt status" });
+  }
+});
+
+/* ===================== RECORD QUIZ ATTEMPT ===================== */
+app.post("/record-attempt", async (req, res) => {
+  const { roll } = req.body;
+
+  if (!roll) {
+    return res.status(400).json({ error: "Roll number required" });
+  }
+
+  try {
+    const now = new Date();
+    const expiry = new Date(now.getTime() + (10 * 60 * 60 * 1000)); // 10 hours from now
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.SHEET_ID,
+      range: "Attempts!A:C",
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [[
+          roll,
+          now.toLocaleString(),
+          expiry.toISOString()
+        ]]
+      }
+    });
+
+    res.json({ status: "recorded" });
+  } catch (err) {
+    console.error("Record attempt error:", err);
+    res.status(500).json({ error: "Failed to record attempt" });
+  }
+});
+
 /* ===================== GENERATE QUIZ FROM SHEET ===================== */
 app.post("/generate-quiz", async (req, res) => {
   try {
@@ -47,7 +123,7 @@ app.post("/generate-quiz", async (req, res) => {
       return res.status(500).json({ error: "No questions found" });
     }
 
-    // Pick random 5 questions
+    // Pick random 10 questions
     const selected = shuffleArray(rows).slice(0, 10);
 
     const quiz = selected.map(row => ({
@@ -111,4 +187,3 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
 });
-
