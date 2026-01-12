@@ -1,6 +1,6 @@
 /* ===================== CONFIG ===================== */
 const BASE_URL = "https://sig-ip-quiz.onrender.com";
-const SECRET_KEY = "YourSecretPassword123"; // Ensure this matches Render!
+const SECRET_KEY = "YourSecretPassword123"; // Must match your Render Environment Variable
 
 /* ===================== STATE ===================== */
 let studentName = "";
@@ -26,7 +26,6 @@ async function startQuizProcess() {
   }
 
   try {
-    // Check 10-hour cooldown
     const response = await fetch(`${BASE_URL}/check-roll/${studentRoll}`, {
         headers: { "x-quiz-secret": SECRET_KEY }
     });
@@ -43,8 +42,7 @@ async function startQuizProcess() {
     generateQuiz();
     
   } catch (err) {
-    console.error(err);
-    alert("Verification failed. Please check your connection.");
+    alert("Verification failed. Please check connection.");
   }
 }
 
@@ -78,6 +76,12 @@ function loadQuestion() {
   const nextBtn = document.getElementById("next-btn");
   const timerEl = document.getElementById("timer");
 
+  // Safeguard: Check if we are past the last question
+  if (currentIdx >= quizData.length) {
+    showResults();
+    return;
+  }
+
   const q = quizData[currentIdx];
   questionText.innerText = `Question ${currentIdx + 1} of ${quizData.length}\n\n${q.question}`;
   optionsContainer.innerHTML = "";
@@ -89,9 +93,9 @@ function loadQuestion() {
 
   timer = setInterval(() => {
     timeLeft--;
-    const minutes = String(Math.floor(timeLeft / 60)).padStart(2, "0");
-    const seconds = String(timeLeft % 60).padStart(2, "0");
-    timerEl.innerText = `Time left: ${minutes}:${seconds}`;
+    const m = String(Math.floor(timeLeft / 60)).padStart(2, "0");
+    const s = String(timeLeft % 60).padStart(2, "0");
+    timerEl.innerText = `Time left: ${m}:${s}`;
 
     if (timeLeft <= 0) {
       clearInterval(timer);
@@ -116,12 +120,13 @@ function loadQuestion() {
 function autoSubmit() {
   const currentQ = quizData[currentIdx];
   quizDetails.push({
-    question: currentQ.question, chosen: "Not Answered",
-    correct: currentQ.options[currentQ.correct], status: "WRONG"
+    question: currentQ.question, 
+    chosen: "Not Answered",
+    correct: currentQ.options[currentQ.correct], 
+    status: "WRONG"
   });
   currentIdx++;
-  if (currentIdx < quizData.length) loadQuestion();
-  else showResults();
+  loadQuestion();
 }
 
 function nextQuestion() {
@@ -131,6 +136,8 @@ function nextQuestion() {
 
   const choiceIdx = parseInt(selected.dataset.choice, 10);
   const currentQ = quizData[currentIdx];
+  
+  // FIX: This line was crashing because it didn't check if currentQ exists
   const isCorrect = choiceIdx === currentQ.correct;
   if (isCorrect) score++;
 
@@ -142,15 +149,23 @@ function nextQuestion() {
   });
 
   currentIdx++;
-  if (currentIdx < quizData.length) loadQuestion();
-  else showResults();
+  loadQuestion();
 }
 
+/* ===================== STEP 5: RESULTS ===================== */
 async function showResults() {
+  clearInterval(timer);
   const timeTaken = `${Math.floor((Date.now() - quizStartTime) / 1000)}s`;
+
+  document.getElementById("quiz-screen").classList.add("hidden");
+  document.getElementById("result-screen").classList.remove("hidden");
+
   const payload = {
-    name: studentName, roll: studentRoll, score: `${score}/${quizData.length}`,
-    details: quizDetails, timeTaken: timeTaken
+    name: studentName, 
+    roll: studentRoll, 
+    score: `${score}/${quizData.length}`,
+    details: quizDetails, 
+    timeTaken: timeTaken
   };
 
   try {
@@ -162,9 +177,7 @@ async function showResults() {
       },
       body: JSON.stringify(payload)
     });
-    document.getElementById("quiz-screen").classList.add("hidden");
-    document.getElementById("result-screen").classList.remove("hidden");
   } catch (err) {
-    console.warn("Failed to save results");
+    console.warn("Save failed");
   }
 }
