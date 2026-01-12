@@ -5,57 +5,91 @@ const { google } = require("googleapis");
 const { body, validationResult } = require("express-validator");
 
 const app = express();
-app.use(cors());
+
+/* ===================== SECURITY: CORS ===================== */
+// strict origin check: Replace with your actual frontend URL when deploying
+app.use(cors({
+  origin: "*", // ⚠️ CHANGE THIS to "https://your-frontend.onrender.com" for maximum security
+  methods: ["GET", "POST"]
+}));
+
 app.use(express.json());
 
 /* ===================== ENV CHECK ===================== */
-if (!process.env.SHEET_ID || !process.env.GOOGLE_SERVICE_ACCOUNT || !process.env.API_SECRET_KEY) {
-  throw new Error("Missing required Environment Variables: SHEET_ID, GOOGLE_SERVICE_ACCOUNT, or API_SECRET_KEY");
+if (!process.env.SHEET_ID || !process.env.GOOGLE_SERVICE_ACCOUNT || !process.env.QUES_SHEET_ID) {
+  throw new Error("Missing required Environment Variables");
 }
 
-/* ===================== SECURITY MIDDLEWARE ===================== */
-const validateSecret = (req, res, next) => {
-  const clientSecret = req.headers["x-quiz-secret"];
-  if (clientSecret !== process.env.API_SECRET_KEY) {
-    return res.status(401).json({ error: "Unauthorized access" });
-  }
-  next();
-};
-
-/* ===================== GOOGLE SHEETS ===================== */
+/* ===================== GOOGLE SHEETS SETUP ===================== */
 const auth = new google.auth.GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT),
   scopes: ["https://www.googleapis.com/auth/spreadsheets"]
 });
 const sheets = google.sheets({ version: "v4", auth });
 
-/* ===================== UTILS ===================== */
-function shuffleArray(arr) {
-  return arr.sort(() => Math.random() - 0.5);
+/* ===================== HELPERS ===================== */
+// Convert Sheet Letter (A,B,C,D) to Index (0,1,2,3)
+function correctIndex(letter) {
+  const map = { 'A': 0, 'B': 1, 'C': 2, 'D': 3 };
+  return map[letter.toUpperCase()] !== undefined ? map[letter.toUpperCase()] : -1;
 }
 
-function correctIndex(letter) {
-  return { A: 0, B: 1, C: 2, D: 3 }[letter];
+// Cache helper to avoid hitting Google API too often
+let cachedQuestions = [];
+let lastCacheTime = 0;
+
+async function getMasterQuestions() {
+  const now = Date.now();
+  // Refresh cache every 10 minutes
+  if (cachedQuestions.length > 0 && (now - lastCacheTime < 10 * 60 * 1000)) {
+    return cachedQuestions;
+  }
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.QUES_SHEET_ID,
+    range: "Sheet1!A2:H"
+  });
+  
+  const rows = response.data.values || [];
+  
+  // Store full data including correct answer (Column H is index 7)
+  // We add an 'id' based on original row index to track it
+  cachedQuestions = rows.map((row, index) => ({
+    id: index, // unique ID based on row position
+    question: row[2],
+    options: [row[3], row[4], row[5], row[6]],
+    correctAnswerIdx: correctIndex(row[7]) 
+  }));
+  
+  lastCacheTime = now;
+  return cachedQuestions;
+}
+
+async function checkCooldown(roll) {
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.SHEET_ID,
+    range: "Attempts!A:B"
+  });
+  const rows = response.data.values || [];
+  const tenHoursAgo = Date.now() - (10 * 60 * 60 * 1000);
+  
+  // Find most recent attempt by this roll
+  const lastAttempt = [...rows].reverse().find(row => row[0] === roll);
+  
+  if (lastAttempt && new Date(lastAttempt[1]).getTime() > tenHoursAgo) {
+    return false; // Not allowed
+  }
+  return true; // Allowed
 }
 
 /* ===================== ENDPOINTS ===================== */
 
-// NEW: Check "Attempts" tab for 10-hour cooldown
-app.get("/check-roll/:roll", validateSecret, async (req, res) => {
-  const { roll } = req.params;
+// 1. Initial Check (User Experience only - Real security is in /submit)
+app.get("/check-roll/:roll", async (req, res) => {
   try {
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.SHEET_ID,
-      range: "Attempts!A:B" // Column A: Roll, B: Timestamp
-    });
-    const rows = response.data.values || [];
-    const tenHoursAgo = Date.now() - (10 * 60 * 60 * 1000);
-    
-    // Check most recent attempt for this roll
-    const lastAttempt = [...rows].reverse().find(row => row[0] === roll);
-
-    if (lastAttempt && new Date(lastAttempt[1]).getTime() > tenHoursAgo) {
-      return res.json({ allowed: false, message: "You have already attempted the quiz. Please try again after 10 hours." });
+    const allowed = await checkCooldown(req.params.roll);
+    if (!allowed) {
+      return res.json({ allowed: false, message: "Cooldown active. Try again later." });
     }
     res.json({ allowed: true });
   } catch (err) {
@@ -63,68 +97,106 @@ app.get("/check-roll/:roll", validateSecret, async (req, res) => {
   }
 });
 
-app.post("/generate-quiz", validateSecret, async (req, res) => {
+// 2. Generate Quiz (Send Questions WITHOUT Answers)
+app.get("/generate-quiz", async (req, res) => {
   try {
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.QUES_SHEET_ID,
-      range: "Sheet1!A2:H"
-    });
-    const rows = response.data.values;
-    const selected = shuffleArray(rows).slice(0, 10);
+    const allQuestions = await getMasterQuestions();
+    
+    // Shuffle and pick 10
+    const shuffled = [...allQuestions].sort(() => 0.5 - Math.random()).slice(0, 10);
 
-    const quiz = selected.map(row => ({
-      question: row[2],
-      options: [row[3], row[4], row[5], row[6]],
-      correct: correctIndex(row[7]) // Re-added for local scoring compatibility
+    // Sanitize: Remove 'correctAnswerIdx' before sending to frontend
+    const clientQuiz = shuffled.map(q => ({
+      id: q.id, // Keep ID so we can grade it later
+      question: q.question,
+      options: q.options
     }));
-    res.json(quiz);
+
+    res.json(clientQuiz);
   } catch (err) {
-    res.status(500).json({ error: "Fetch failed" });
+    console.error(err);
+    res.status(500).json({ error: "Failed to generate quiz" });
   }
 });
 
-app.post("/save", 
-  validateSecret, 
+// 3. Submit & Grade (The Secure Core)
+app.post("/submit-quiz", 
   [
-    body('name').trim().notEmpty().isLength({ max: 50 }).escape(),
-    body('roll').trim().notEmpty().isAlphanumeric().isLength({ max: 20 }),
-    body('score').notEmpty().isString(),
-    body('details').isArray({ min: 1 })
-  ], 
+    body('name').trim().escape(),
+    body('roll').trim().notEmpty(),
+    body('answers').isArray(), // Expecting [{id: 1, selected: 0}, ...]
+    body('timeTaken').isString()
+  ],
   async (req, res) => {
+    
+    // Validation
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+    const { name, roll, answers, timeTaken } = req.body;
+    const timestamp = new Date().toLocaleString();
+
+    // 1. SECURITY: Re-Check Cooldown
+    const isAllowed = await checkCooldown(roll);
+    if (!isAllowed) {
+      return res.status(403).json({ error: "Cooldown active. Submission rejected." });
     }
 
-    const { name, roll, score, details, timeTaken } = req.body;
-    const timestamp = new Date().toLocaleString();
-    
-    const resultRows = details.map((d, i) => [
-      timestamp, name, roll, score, i + 1, d.question, d.chosen, d.correct, d.status
+    // 2. LOGIC: Calculate Score Server-Side
+    const masterQuestions = await getMasterQuestions();
+    let score = 0;
+    const detailsLog = [];
+
+    answers.forEach(ans => {
+      // Find the original question by ID
+      const originalQ = masterQuestions.find(mq => mq.id === ans.id);
+      
+      if (originalQ) {
+        const isCorrect = (ans.selected === originalQ.correctAnswerIdx);
+        if (isCorrect) score++;
+
+        detailsLog.push({
+          q: originalQ.question,
+          chosen: originalQ.options[ans.selected] || "Skipped",
+          correct: originalQ.options[originalQ.correctAnswerIdx],
+          status: isCorrect ? "CORRECT" : "WRONG"
+        });
+      }
+    });
+
+    const finalScore = `${score}/${answers.length}`;
+
+    // 3. STORAGE: Save to Sheets
+    // Prepare Rows
+    const resultRows = detailsLog.map((d, i) => [
+      timestamp, name, roll, finalScore, i + 1, d.q, d.chosen, d.correct, d.status
     ]);
-    
-    // Save record to "Attempts" tab as well
-    const attemptRow = [[roll, timestamp, timeTaken]];
+    const attemptRow = [[roll, timestamp, timeTaken, finalScore]];
 
     try {
+      // Save Detailed Logs
       await sheets.spreadsheets.values.append({
         spreadsheetId: process.env.SHEET_ID,
         range: "Sheet1!A:I",
         valueInputOption: "USER_ENTERED",
         requestBody: { values: resultRows }
       });
+      // Save Attempt Metadata
       await sheets.spreadsheets.values.append({
         spreadsheetId: process.env.SHEET_ID,
-        range: "Attempts!A:C",
+        range: "Attempts!A:D",
         valueInputOption: "USER_ENTERED",
         requestBody: { values: attemptRow }
       });
-      res.json({ status: "saved" });
+
+      // Return score to user
+      res.json({ success: true, score: finalScore });
+
     } catch (err) {
+      console.error(err);
       res.status(500).json({ error: "Save failed" });
     }
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Secure Server running on ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on ${PORT}`));
