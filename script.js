@@ -20,36 +20,23 @@ async function startQuizProcess() {
     return;
   }
 
-  // Check if roll number has already attempted the quiz
   try {
-    const checkResponse = await fetch("https://sig-ip-quiz.onrender.com/check-attempt", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ roll: studentRoll })
-    });
-
+    // Check for existing attempts
+    const checkResponse = await fetch(`https://sig-ip-quiz.onrender.com/check-roll/${studentRoll}`);
     const checkData = await checkResponse.json();
 
-    if (!checkData.canAttempt) {
+    if (!checkData.allowed) {
       alert(checkData.message);
       return;
     }
 
-    // Record this attempt
-    await fetch("https://sig-ip-quiz.onrender.com/record-attempt", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ roll: studentRoll })
-    });
-
-    // Proceed to quiz
     document.getElementById("registration-screen").classList.add("hidden");
     document.getElementById("setup-screen").classList.remove("hidden");
 
     generateQuiz();
-  } catch (error) {
-    console.error("Error checking attempt:", error);
-    alert("Failed to verify attempt status. Please try again.");
+  } catch (err) {
+    console.error(err);
+    alert("Validation failed. Please try again later.");
   }
 }
 
