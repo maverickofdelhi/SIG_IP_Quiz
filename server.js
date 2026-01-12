@@ -33,29 +33,30 @@ function correctIndex(letter) {
   return { A: 0, B: 1, C: 2, D: 3 }[letter];
 }
 
-/* ===================== NEW: CHECK PREVIOUS ATTEMPTS ===================== */
+/* ===================== CHECK PREVIOUS ATTEMPTS ===================== */
 app.get("/check-roll/:roll", async (req, res) => {
   const { roll } = req.params;
 
   try {
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.SHEET_ID,
-      range: "Sheet1!A:C" // Column A: Timestamp, C: Roll
+      range: "Attempts!A:B" // Checking Roll (A) and Timestamp (B)
     });
 
     const rows = response.data.values;
-    if (!rows || rows.length <= 1) { // Only headers or empty
+    // If no data or only headers exist, allow the attempt
+    if (!rows || rows.length <= 1) {
       return res.json({ allowed: true });
     }
 
     const tenHoursInMs = 10 * 60 * 60 * 1000;
     const now = Date.now();
 
-    // Check from bottom to top for the most recent entry
-    const lastAttempt = [...rows].reverse().find(row => row[2] === roll);
+    // Find the most recent attempt for this roll (searching from bottom up)
+    const lastAttempt = [...rows].reverse().find(row => row[0] === roll);
 
-    if (lastAttempt) {
-      const attemptTime = new Date(lastAttempt[0]).getTime();
+    if (lastAttempt && lastAttempt[1]) {
+      const attemptTime = new Date(lastAttempt[1]).getTime();
       
       if (now - attemptTime < tenHoursInMs) {
         return res.json({ 
@@ -78,7 +79,7 @@ app.post("/generate-quiz", async (req, res) => {
   try {
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.QUES_SHEET_ID,
-      range: "Sheet1!A2:H" // skip header row
+      range: "Sheet1!A2:H" 
     });
 
     const rows = response.data.values;
@@ -114,24 +115,29 @@ app.post("/save", async (req, res) => {
 
   const timestamp = new Date().toLocaleString();
 
-  const rows = details.map((d, i) => [
-    timestamp,
-    name,
-    roll,
-    score,
-    i + 1,
-    d.question,
-    d.chosen,
-    d.correct,
-    d.status
+  // Primary results go to Sheet1 (as per your original code)
+  const resultRows = details.map((d, i) => [
+    timestamp, name, roll, score, i + 1, d.question, d.chosen, d.correct, d.status
   ]);
 
+  // Log entry for the "Attempts" sheet to track the 10-hour rule
+  const attemptRow = [[roll, timestamp]];
+
   try {
+    // Save full details to Sheet1
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SHEET_ID,
       range: "Sheet1!A:I",
       valueInputOption: "USER_ENTERED",
-      requestBody: { values: rows }
+      requestBody: { values: resultRows }
+    });
+
+    // Save attempt log to "Attempts" sheet
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.SHEET_ID,
+      range: "Attempts!A:B",
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: attemptRow }
     });
 
     res.json({ status: "saved" });
