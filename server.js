@@ -3,15 +3,25 @@ const express = require("express");
 const cors = require("cors");
 const { google } = require("googleapis");
 const { body, validationResult } = require("express-validator");
+const rateLimit = require("express-rate-limit"); // FIXED: Imported rate limiter
 
 const app = express();
 
 /* ===================== SECURITY: CORS ===================== */
 // strict origin check: Replace with your actual frontend URL when deploying
 app.use(cors({
-  origin: "*", // ⚠️ CHANGE THIS to "https://your-frontend.onrender.com" for maximum security
+  origin: "*", // Keep this as is for now per your request
   methods: ["GET", "POST"]
 }));
+
+/* ===================== SECURITY: RATE LIMITING ===================== */
+// FIXED: Applied Rate Limiter to stop DoS attacks
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: { error: "Too many requests, please try again later." }
+});
+app.use(limiter);
 
 app.use(express.json());
 
@@ -32,6 +42,17 @@ const sheets = google.sheets({ version: "v4", auth });
 function correctIndex(letter) {
   const map = { 'A': 0, 'B': 1, 'C': 2, 'D': 3 };
   return map[letter.toUpperCase()] !== undefined ? map[letter.toUpperCase()] : -1;
+}
+
+// FIXED: Sanitization Helper to prevent Formula Injection
+function sanitizeInput(input) {
+  if (typeof input !== 'string') return input;
+  // If input starts with =, +, -, or @, prepend a single quote to treat it as text
+  const dangerousPrefixes = ['=', '+', '-', '@'];
+  if (dangerousPrefixes.some(prefix => input.trim().startsWith(prefix))) {
+    return `'${input}`;
+  }
+  return input;
 }
 
 // Cache helper to avoid hitting Google API too often
@@ -167,11 +188,17 @@ app.post("/submit-quiz",
     const finalScore = `${score}/${answers.length}`;
 
     // 3. STORAGE: Save to Sheets
-    // Prepare Rows
+    
+    // FIXED: Sanitize inputs before saving to prevent Formula Injection
+    const safeName = sanitizeInput(name);
+    const safeRoll = sanitizeInput(roll);
+    const safeTime = sanitizeInput(timeTaken);
+
+    // Prepare Rows (Using SAFE variables)
     const resultRows = detailsLog.map((d, i) => [
-      timestamp, name, roll, finalScore, i + 1, d.q, d.chosen, d.correct, d.status
+      timestamp, safeName, safeRoll, finalScore, i + 1, d.q, d.chosen, d.correct, d.status
     ]);
-    const attemptRow = [[roll, timestamp, timeTaken, finalScore]];
+    const attemptRow = [[safeRoll, timestamp, safeTime, finalScore]];
 
     try {
       // Save Detailed Logs
