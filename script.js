@@ -11,7 +11,7 @@ let timer = null;
 let timeLeft = 60; // 1 minute per question
 
 /* ===================== STEP 1: START ===================== */
-function startQuizProcess() {
+async function startQuizProcess() {
   studentName = document.getElementById("student-name").value.trim();
   studentRoll = document.getElementById("student-roll").value.trim();
 
@@ -20,10 +20,37 @@ function startQuizProcess() {
     return;
   }
 
-  document.getElementById("registration-screen").classList.add("hidden");
-  document.getElementById("setup-screen").classList.remove("hidden");
+  // Check if roll number has already attempted the quiz
+  try {
+    const checkResponse = await fetch("https://sig-ip-quiz.onrender.com/check-attempt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ roll: studentRoll })
+    });
 
-  generateQuiz();
+    const checkData = await checkResponse.json();
+
+    if (!checkData.canAttempt) {
+      alert(checkData.message);
+      return;
+    }
+
+    // Record this attempt
+    await fetch("https://sig-ip-quiz.onrender.com/record-attempt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ roll: studentRoll })
+    });
+
+    // Proceed to quiz
+    document.getElementById("registration-screen").classList.add("hidden");
+    document.getElementById("setup-screen").classList.remove("hidden");
+
+    generateQuiz();
+  } catch (error) {
+    console.error("Error checking attempt:", error);
+    alert("Failed to verify attempt status. Please try again.");
+  }
 }
 
 /* ===================== STEP 2: FETCH QUIZ ===================== */
