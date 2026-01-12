@@ -5,6 +5,7 @@ let quizData = [];
 let currentIdx = 0;
 let score = 0;
 let quizDetails = [];
+let quizStartTime = null; // To track duration
 
 /* ===================== TIMER ===================== */
 let timer = null;
@@ -21,7 +22,6 @@ async function startQuizProcess() {
   }
 
   try {
-    // Verify roll number against the 10-hour rule
     const checkResponse = await fetch(`https://sig-ip-quiz.onrender.com/check-roll/${studentRoll}`);
     const checkData = await checkResponse.json();
 
@@ -30,36 +30,31 @@ async function startQuizProcess() {
       return;
     }
 
-    // Proceed if allowed
     document.getElementById("registration-screen").classList.add("hidden");
     document.getElementById("setup-screen").classList.remove("hidden");
 
     generateQuiz();
   } catch (err) {
-    console.error(err);
-    alert("Validation failed. Please check your internet connection.");
+    alert("Validation failed. Check your connection.");
   }
 }
 
 /* ===================== STEP 2: FETCH QUIZ ===================== */
 async function generateQuiz() {
   try {
-    const response = await fetch(
-      "https://sig-ip-quiz.onrender.com/generate-quiz",
-      {
+    const response = await fetch("https://sig-ip-quiz.onrender.com/generate-quiz", {
         method: "POST",
         headers: { "Content-Type": "application/json" }
-      }
-    );
+    });
 
     quizData = await response.json();
+    quizStartTime = Date.now(); // Record start time
 
     document.getElementById("setup-screen").classList.add("hidden");
     document.getElementById("quiz-screen").classList.remove("hidden");
 
     loadQuestion();
   } catch (err) {
-    console.error(err);
     alert("Quiz generation failed");
   }
 }
@@ -72,7 +67,6 @@ function loadQuestion() {
   const timerEl = document.getElementById("timer");
 
   const q = quizData[currentIdx];
-
   questionText.innerText = `Question ${currentIdx + 1} of ${quizData.length}\n\n${q.question}`;
   optionsContainer.innerHTML = "";
   nextBtn.style.display = "none";
@@ -83,25 +77,20 @@ function loadQuestion() {
 
   timer = setInterval(() => {
     timeLeft--;
-    const minutes = String(Math.floor(timeLeft / 60)).padStart(2, "0");
-    const seconds = String(timeLeft % 60).padStart(2, "0");
-    timerEl.innerText = `Time left: ${minutes}:${seconds}`;
-
-    if (timeLeft <= 0) {
-      clearInterval(timer);
-      autoSubmit();
-    }
+    const m = String(Math.floor(timeLeft / 60)).padStart(2, "0");
+    const s = String(timeLeft % 60).padStart(2, "0");
+    timerEl.innerText = `Time left: ${m}:${s}`;
+    if (timeLeft <= 0) { clearInterval(timer); autoSubmit(); }
   }, 1000);
 
   q.options.forEach((opt, idx) => {
     const btn = document.createElement("button");
     btn.className = "option-btn";
     btn.innerText = opt;
-    btn.dataset.choice = idx;
-
     btn.onclick = () => {
       document.querySelectorAll(".option-btn").forEach(b => b.classList.remove("selected"));
       btn.classList.add("selected");
+      btn.dataset.choice = idx;
       nextBtn.style.display = "block";
     };
     optionsContainer.appendChild(btn);
@@ -109,13 +98,7 @@ function loadQuestion() {
 }
 
 function autoSubmit() {
-  const currentQ = quizData[currentIdx];
-  quizDetails.push({
-    question: currentQ.question,
-    chosen: "Not Answered",
-    correct: currentQ.options[currentQ.correct],
-    status: "WRONG"
-  });
+  saveStepData("Not Answered", false);
   currentIdx++;
   if (currentIdx < quizData.length) loadQuestion();
   else showResults();
@@ -124,30 +107,33 @@ function autoSubmit() {
 function nextQuestion() {
   clearInterval(timer);
   const selected = document.querySelector(".selected");
-  if (!selected) {
-    alert("Please select an option");
-    return;
-  }
-  const choiceIdx = parseInt(selected.dataset.choice, 10);
-  const currentQ = quizData[currentIdx];
-  const isCorrect = choiceIdx === currentQ.correct;
+  const choiceIdx = parseInt(selected.dataset.choice);
+  const isCorrect = choiceIdx === quizData[currentIdx].correct;
   if (isCorrect) score++;
 
-  quizDetails.push({
-    question: currentQ.question,
-    chosen: currentQ.options[choiceIdx],
-    correct: currentQ.options[currentQ.correct],
-    status: isCorrect ? "CORRECT" : "WRONG"
-  });
-
+  saveStepData(quizData[currentIdx].options[choiceIdx], isCorrect);
   currentIdx++;
   if (currentIdx < quizData.length) loadQuestion();
   else showResults();
 }
 
+function saveStepData(chosen, isCorrect) {
+  quizDetails.push({
+    question: quizData[currentIdx].question,
+    chosen: chosen,
+    correct: quizData[currentIdx].options[quizData[currentIdx].correct],
+    status: isCorrect ? "CORRECT" : "WRONG"
+  });
+}
+
 /* ===================== STEP 5: RESULTS ===================== */
 async function showResults() {
   clearInterval(timer);
+
+  // Calculate Duration
+  const diff = Math.floor((Date.now() - quizStartTime) / 1000);
+  const timeTakenStr = `${Math.floor(diff / 60)}m ${diff % 60}s`;
+
   document.getElementById("quiz-screen").classList.add("hidden");
   document.getElementById("result-screen").classList.remove("hidden");
 
@@ -155,17 +141,13 @@ async function showResults() {
     name: studentName,
     roll: studentRoll,
     score: `${score}/${quizData.length}`,
-    details: quizDetails
+    details: quizDetails,
+    timeTaken: timeTakenStr
   };
 
-  try {
-    await fetch("https://sig-ip-quiz.onrender.com/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    console.log("Results and attempt logged successfully");
-  } catch {
-    console.warn("Failed to save results");
-  }
+  await fetch("https://sig-ip-quiz.onrender.com/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
 }
