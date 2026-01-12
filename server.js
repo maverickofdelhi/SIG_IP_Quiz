@@ -35,16 +35,15 @@ function correctIndex(letter) {
 
 /* ===================== CHECK PREVIOUS ATTEMPTS ===================== */
 app.get("/check-roll/:roll", async (req, res) => {
-  const { roll } = req.params;
+  const rollToCheck = String(req.params.roll).trim(); // Force string
 
   try {
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.SHEET_ID,
-      range: "Attempts!A:B" // Checking Roll (A) and Timestamp (B)
+      range: "Attempts!A:B" 
     });
 
     const rows = response.data.values;
-    // If no data or only headers exist, allow the attempt
     if (!rows || rows.length <= 1) {
       return res.json({ allowed: true });
     }
@@ -52,8 +51,8 @@ app.get("/check-roll/:roll", async (req, res) => {
     const tenHoursInMs = 10 * 60 * 60 * 1000;
     const now = Date.now();
 
-    // Find the most recent attempt for this roll (searching from bottom up)
-    const lastAttempt = [...rows].reverse().find(row => row[0] === roll);
+    // Fix: Compare as Strings to handle leading zeros
+    const lastAttempt = [...rows].reverse().find(row => String(row[0]).trim() === rollToCheck);
 
     if (lastAttempt && lastAttempt[1]) {
       const attemptTime = new Date(lastAttempt[1]).getTime();
@@ -74,7 +73,7 @@ app.get("/check-roll/:roll", async (req, res) => {
   }
 });
 
-/* ===================== GENERATE QUIZ FROM SHEET ===================== */
+/* ===================== GENERATE QUIZ ===================== */
 app.post("/generate-quiz", async (req, res) => {
   try {
     const response = await sheets.spreadsheets.values.get({
@@ -83,14 +82,9 @@ app.post("/generate-quiz", async (req, res) => {
     });
 
     const rows = response.data.values;
+    if (!rows || rows.length === 0) return res.status(500).json({ error: "No questions found" });
 
-    if (!rows || rows.length === 0) {
-      return res.status(500).json({ error: "No questions found" });
-    }
-
-    // Pick random 10 questions
     const selected = shuffleArray(rows).slice(0, 10);
-
     const quiz = selected.map(row => ({
       question: row[2],
       options: [row[3], row[4], row[5], row[6]],
@@ -98,16 +92,14 @@ app.post("/generate-quiz", async (req, res) => {
     }));
 
     res.json(quiz);
-
   } catch (err) {
-    console.error("Quiz fetch error:", err);
     res.status(500).json({ error: "Failed to load quiz" });
   }
 });
 
 /* ===================== SAVE RESULTS ===================== */
 app.post("/save", async (req, res) => {
-  const { name, roll, score, details } = req.body;
+  const { name, roll, score, details, timeTaken } = req.body;
 
   if (!name || !roll || !score || !Array.isArray(details)) {
     return res.status(400).json({ error: "Invalid payload" });
@@ -115,16 +107,16 @@ app.post("/save", async (req, res) => {
 
   const timestamp = new Date().toLocaleString();
 
-  // Primary results go to Sheet1 (as per your original code)
+  // Full results for Sheet1
   const resultRows = details.map((d, i) => [
-    timestamp, name, roll, score, i + 1, d.question, d.chosen, d.correct, d.status
+    timestamp, name, `'${roll}`, score, i + 1, d.question, d.chosen, d.correct, d.status
   ]);
 
-  // Log entry for the "Attempts" sheet to track the 10-hour rule
-  const attemptRow = [[roll, timestamp]];
+  // Entry for Attempts sheet: Roll (A), Timestamp (B), Time Taken (C)
+  // We use '${roll} to force Google Sheets to treat it as Text (preserving leading zeros)
+  const attemptRow = [[`'${roll}`, timestamp, timeTaken]];
 
   try {
-    // Save full details to Sheet1
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SHEET_ID,
       range: "Sheet1!A:I",
@@ -132,10 +124,9 @@ app.post("/save", async (req, res) => {
       requestBody: { values: resultRows }
     });
 
-    // Save attempt log to "Attempts" sheet
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SHEET_ID,
-      range: "Attempts!A:B",
+      range: "Attempts!A:C",
       valueInputOption: "USER_ENTERED",
       requestBody: { values: attemptRow }
     });
@@ -145,11 +136,6 @@ app.post("/save", async (req, res) => {
     console.error("Sheet save error:", err);
     res.status(500).json({ error: "Sheet save failed" });
   }
-});
-
-/* ===================== HEALTH CHECK ===================== */
-app.get("/hi", (req, res) => {
-  res.json({ message: "hi" });
 });
 
 /* ===================== START ===================== */
