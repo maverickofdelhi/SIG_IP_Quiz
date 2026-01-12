@@ -8,8 +8,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+/* ===================== ENV CHECK ===================== */
+if (!process.env.SHEET_ID || !process.env.GOOGLE_SERVICE_ACCOUNT || !process.env.API_SECRET_KEY) {
+  throw new Error("Missing required Environment Variables");
+}
+
 /* ===================== SECURITY MIDDLEWARE ===================== */
-// Check for a private secret key in headers to block unauthorized users
 const validateSecret = (req, res, next) => {
   const clientSecret = req.headers["x-quiz-secret"];
   if (clientSecret !== process.env.API_SECRET_KEY) {
@@ -18,7 +22,7 @@ const validateSecret = (req, res, next) => {
   next();
 };
 
-/* ===================== GOOGLE SHEETS SETUP ===================== */
+/* ===================== GOOGLE SHEETS ===================== */
 const auth = new google.auth.GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT),
   scopes: ["https://www.googleapis.com/auth/spreadsheets"]
@@ -36,7 +40,7 @@ function correctIndex(letter) {
 
 /* ===================== ENDPOINTS ===================== */
 
-// Validation for Roll Check
+// Check previous attempts
 app.get("/check-roll/:roll", validateSecret, async (req, res) => {
   const { roll } = req.params;
   try {
@@ -57,7 +61,7 @@ app.get("/check-roll/:roll", validateSecret, async (req, res) => {
   }
 });
 
-// Quiz generation
+// Generate Quiz
 app.post("/generate-quiz", validateSecret, async (req, res) => {
   try {
     const response = await sheets.spreadsheets.values.get({
@@ -80,13 +84,13 @@ app.post("/generate-quiz", validateSecret, async (req, res) => {
 app.post("/save", 
   validateSecret, 
   [
-    body('name').trim().notEmpty().isLength({ max: 50 }).escape(), // Sanitize name
-    body('roll').trim().notEmpty().isAlphanumeric().isLength({ max: 20 }), // Strict roll check
+    body('name').trim().notEmpty().isLength({ max: 50 }).escape(),
+    body('roll').trim().notEmpty().isAlphanumeric().isLength({ max: 20 }),
     body('score').notEmpty().isString(),
     body('details').isArray({ min: 1 })
   ], 
   async (req, res) => {
-    const errors = validationResult(req); // Check for validation errors
+    const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
