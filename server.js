@@ -33,79 +33,43 @@ function correctIndex(letter) {
   return { A: 0, B: 1, C: 2, D: 3 }[letter];
 }
 
-/* ===================== CHECK IF ROLL NUMBER ATTEMPTED ===================== */
-app.post("/check-attempt", async (req, res) => {
-  const { roll } = req.body;
-
-  if (!roll) {
-    return res.status(400).json({ error: "Roll number required" });
-  }
+/* ===================== NEW: CHECK PREVIOUS ATTEMPTS ===================== */
+app.get("/check-roll/:roll", async (req, res) => {
+  const { roll } = req.params;
 
   try {
-    // Fetch all attempts from Attempts sheet
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.SHEET_ID,
-      range: "Attempts!A:C" // Columns: Roll, Timestamp, ExpiryTime
+      range: "Sheet1!A:C" // Column A: Timestamp, C: Roll
     });
 
-    const rows = response.data.values || [];
-    
-    // Skip header row and check for this roll number
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      if (row[0] === roll) {
-        const expiryTime = new Date(row[2]);
-        const now = new Date();
+    const rows = response.data.values;
+    if (!rows || rows.length <= 1) { // Only headers or empty
+      return res.json({ allowed: true });
+    }
 
-        // If attempt is still within 10 hours
-        if (now < expiryTime) {
-          const hoursLeft = Math.ceil((expiryTime - now) / (1000 * 60 * 60));
-          return res.json({ 
-            canAttempt: false, 
-            message: `You have already attempted this quiz. Please try again after ${hoursLeft} hour(s).`,
-            expiryTime: expiryTime.toLocaleString()
-          });
-        }
+    const tenHoursInMs = 10 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    // Check from bottom to top for the most recent entry
+    const lastAttempt = [...rows].reverse().find(row => row[2] === roll);
+
+    if (lastAttempt) {
+      const attemptTime = new Date(lastAttempt[0]).getTime();
+      
+      if (now - attemptTime < tenHoursInMs) {
+        return res.json({ 
+          allowed: false, 
+          message: "You have already attempted the quiz. Please try again after 10 hours." 
+        });
       }
     }
 
-    // No active attempt found
-    res.json({ canAttempt: true });
+    res.json({ allowed: true });
+
   } catch (err) {
-    console.error("Check attempt error:", err);
-    res.status(500).json({ error: "Failed to check attempt status" });
-  }
-});
-
-/* ===================== RECORD QUIZ ATTEMPT ===================== */
-app.post("/record-attempt", async (req, res) => {
-  const { roll } = req.body;
-
-  if (!roll) {
-    return res.status(400).json({ error: "Roll number required" });
-  }
-
-  try {
-    const now = new Date();
-    const expiry = new Date(now.getTime() + (10 * 60 * 60 * 1000)); // 10 hours from now
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.SHEET_ID,
-      range: "Attempts!A:C",
-      valueInputOption: "USER_ENTERED",
-      requestBody: {
-        values: [[
-          roll,
-          now.toLocaleString(),
-          expiry.toISOString()
-        ]]
-      }
-    });
-
-    res.json({ status: "recorded" });
-  } catch (err) {
-    console.error("Record attempt error:", err);
-    res.status(500).json({ error: "Failed to record attempt" });
+    console.error("Check roll error:", err);
+    res.status(500).json({ error: "Validation failed" });
   }
 });
 
