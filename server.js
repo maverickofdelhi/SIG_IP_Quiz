@@ -9,11 +9,8 @@ app.use(cors());
 app.use(express.json());
 
 /* ===================== ENV CHECK ===================== */
-if (!process.env.SHEET_ID) {
-  throw new Error("Missing SHEET_ID");
-}
-if (!process.env.GOOGLE_SERVICE_ACCOUNT) {
-  throw new Error("Missing GOOGLE_SERVICE_ACCOUNT");
+if (!process.env.SHEET_ID || !process.env.GOOGLE_SERVICE_ACCOUNT) {
+  throw new Error("Missing Env Variables");
 }
 
 /* ===================== GOOGLE SHEETS ===================== */
@@ -35,15 +32,19 @@ function correctIndex(letter) {
 
 /* ===================== CHECK PREVIOUS ATTEMPTS ===================== */
 app.get("/check-roll/:roll", async (req, res) => {
-  const rollToCheck = String(req.params.roll).trim(); // Force string
+  // 1. Clean the incoming roll number (remove spaces)
+  const rollToCheck = String(req.params.roll).trim();
 
   try {
+    // 2. Fetch data from Attempts sheet
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.SHEET_ID,
-      range: "Attempts!A:B" 
+      range: "Attempts!A:B" // Reading Roll and Timestamp
     });
 
     const rows = response.data.values;
+    
+    // If empty sheet, allow
     if (!rows || rows.length <= 1) {
       return res.json({ allowed: true });
     }
@@ -51,16 +52,32 @@ app.get("/check-roll/:roll", async (req, res) => {
     const tenHoursInMs = 10 * 60 * 60 * 1000;
     const now = Date.now();
 
-    // Fix: Compare as Strings to handle leading zeros
-    const lastAttempt = [...rows].reverse().find(row => String(row[0]).trim() === rollToCheck);
+    // 3. Find the last attempt
+    // We reverse to find the most recent one first
+    const lastAttempt = [...rows].reverse().find(row => {
+      // CLEAN DATA FROM SHEET: Remove single quotes (') and spaces
+      const sheetRoll = String(row[0]).replace(/'/g, "").trim(); 
+      return sheetRoll === rollToCheck;
+    });
 
-    if (lastAttempt && lastAttempt[1]) {
-      const attemptTime = new Date(lastAttempt[1]).getTime();
+    if (lastAttempt) {
+      // 4. Parse the ISO Date
+      const lastTimeStr = lastAttempt[1]; // Column B
+      const attemptTime = new Date(lastTimeStr).getTime();
+
+      console.log(`Checking Roll: ${rollToCheck} | Found: ${lastTimeStr} | Diff: ${(now - attemptTime)/1000/60} mins`);
+
+      if (isNaN(attemptTime)) {
+        // If date is invalid, assume safe to prevent locking out valid users, 
+        // OR block if you want strict security. currently allowing.
+        console.error("Invalid Date found in sheet:", lastTimeStr);
+        return res.json({ allowed: true }); 
+      }
       
       if (now - attemptTime < tenHoursInMs) {
         return res.json({ 
           allowed: false, 
-          message: "You have already attempted the quiz. Please try again after 10 hours." 
+          message: `You have already attempted the quiz. Please try again after 10 hours.` 
         });
       }
     }
@@ -105,18 +122,19 @@ app.post("/save", async (req, res) => {
     return res.status(400).json({ error: "Invalid payload" });
   }
 
-  const timestamp = new Date().toLocaleString();
+  // FIX: Use ISO String for safe machine parsing
+  const timestamp = new Date().toISOString(); 
 
-  // Full results for Sheet1
   const resultRows = details.map((d, i) => [
     timestamp, name, `'${roll}`, score, i + 1, d.question, d.chosen, d.correct, d.status
   ]);
 
-  // Entry for Attempts sheet: Roll (A), Timestamp (B), Time Taken (C)
-  // We use '${roll} to force Google Sheets to treat it as Text (preserving leading zeros)
+  // Attempts Sheet: Roll, Timestamp, TimeTaken
+  // We add ' before roll to force it as text in sheets
   const attemptRow = [[`'${roll}`, timestamp, timeTaken]];
 
   try {
+    // 1. Save detailed results
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SHEET_ID,
       range: "Sheet1!A:I",
@@ -124,9 +142,10 @@ app.post("/save", async (req, res) => {
       requestBody: { values: resultRows }
     });
 
+    // 2. Save Attempt Log (For the cooldown check)
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SHEET_ID,
-      range: "Attempts!A:C",
+      range: "Attempts!A:C", // Writes to A (Roll), B (Time), C (Duration)
       valueInputOption: "USER_ENTERED",
       requestBody: { values: attemptRow }
     });
