@@ -1,16 +1,11 @@
 /* ===================== CONFIG ===================== */
-// Ensure this URL matches your deployed backend URL
 const BASE_URL = "https://sig-ip-quiz.onrender.com";
-
-/** * SECURITY: This key must be identical to the API_SECRET_KEY 
- * you set in your Render environment variables.
- */
-const SECRET_KEY = "YourSecretPassword123"; 
+const SECRET_KEY = "YourSecretPassword123"; // Ensure this matches Render!
 
 /* ===================== STATE ===================== */
 let studentName = "";
 let studentRoll = "";
-let quizData = []; 
+let quizData = [];
 let currentIdx = 0;
 let score = 0;
 let quizDetails = [];
@@ -18,7 +13,7 @@ let quizStartTime = null;
 
 /* ===================== TIMER ===================== */
 let timer = null;
-let timeLeft = 60; // 1 minute per question
+let timeLeft = 60;
 
 /* ===================== STEP 1: START ===================== */
 async function startQuizProcess() {
@@ -30,12 +25,8 @@ async function startQuizProcess() {
     return;
   }
 
-  // Visual feedback that we are verifying
-  const startBtn = document.getElementById("start-btn");
-  if(startBtn) startBtn.disabled = true;
-
   try {
-    // Check for existing attempts with the Secret Key in header
+    // Check 10-hour cooldown
     const response = await fetch(`${BASE_URL}/check-roll/${studentRoll}`, {
         headers: { "x-quiz-secret": SECRET_KEY }
     });
@@ -43,11 +34,9 @@ async function startQuizProcess() {
 
     if (!checkData.allowed) {
       alert(checkData.message);
-      if(startBtn) startBtn.disabled = false;
       return;
     }
 
-    // Proceed to setup
     document.getElementById("registration-screen").classList.add("hidden");
     document.getElementById("setup-screen").classList.remove("hidden");
 
@@ -55,8 +44,7 @@ async function startQuizProcess() {
     
   } catch (err) {
     console.error(err);
-    alert("Verification failed. Please check your internet connection.");
-    if(startBtn) startBtn.disabled = false;
+    alert("Verification failed. Please check your connection.");
   }
 }
 
@@ -64,22 +52,21 @@ async function startQuizProcess() {
 async function generateQuiz() {
   try {
     const response = await fetch(`${BASE_URL}/generate-quiz`, {
-      method: "POST",
-      headers: { 
-        "Content-Type": "application/json",
-        "x-quiz-secret": SECRET_KEY 
-      }
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "x-quiz-secret": SECRET_KEY 
+        }
     });
 
     quizData = await response.json();
-    quizStartTime = Date.now(); // Start tracking session time
+    quizStartTime = Date.now();
 
     document.getElementById("setup-screen").classList.add("hidden");
     document.getElementById("quiz-screen").classList.remove("hidden");
 
     loadQuestion();
   } catch (err) {
-    console.error(err);
     alert("Quiz generation failed");
   }
 }
@@ -90,17 +77,12 @@ function loadQuestion() {
   const optionsContainer = document.getElementById("options-container");
   const nextBtn = document.getElementById("next-btn");
   const timerEl = document.getElementById("timer");
-  const counterEl = document.getElementById("question-counter");
 
   const q = quizData[currentIdx];
-
-  // Update UI
-  if(counterEl) counterEl.innerText = `Question ${currentIdx + 1} of ${quizData.length}`;
-  questionText.innerText = q.question;
+  questionText.innerText = `Question ${currentIdx + 1} of ${quizData.length}\n\n${q.question}`;
   optionsContainer.innerHTML = "";
   nextBtn.style.display = "none";
 
-  // Reset timer
   clearInterval(timer);
   timeLeft = 60;
   timerEl.innerText = "Time left: 01:00";
@@ -117,32 +99,46 @@ function loadQuestion() {
     }
   }, 1000);
 
-  // Render options
   q.options.forEach((opt, idx) => {
     const btn = document.createElement("button");
     btn.className = "option-btn";
     btn.innerText = opt;
     btn.dataset.choice = idx;
-
     btn.onclick = () => {
       document.querySelectorAll(".option-btn").forEach(b => b.classList.remove("selected"));
       btn.classList.add("selected");
       nextBtn.style.display = "block";
     };
-
     optionsContainer.appendChild(btn);
   });
 }
 
-/* ===================== AUTO SUBMIT (TIMEOUT) ===================== */
 function autoSubmit() {
   const currentQ = quizData[currentIdx];
+  quizDetails.push({
+    question: currentQ.question, chosen: "Not Answered",
+    correct: currentQ.options[currentQ.correct], status: "WRONG"
+  });
+  currentIdx++;
+  if (currentIdx < quizData.length) loadQuestion();
+  else showResults();
+}
+
+function nextQuestion() {
+  clearInterval(timer);
+  const selected = document.querySelector(".selected");
+  if (!selected) return alert("Please select an option");
+
+  const choiceIdx = parseInt(selected.dataset.choice, 10);
+  const currentQ = quizData[currentIdx];
+  const isCorrect = choiceIdx === currentQ.correct;
+  if (isCorrect) score++;
 
   quizDetails.push({
     question: currentQ.question,
-    chosen: "Not Answered",
+    chosen: currentQ.options[choiceIdx],
     correct: currentQ.options[currentQ.correct],
-    status: "WRONG"
+    status: isCorrect ? "CORRECT" : "WRONG"
   });
 
   currentIdx++;
@@ -150,14 +146,25 @@ function autoSubmit() {
   else showResults();
 }
 
-/* ===================== STEP 4: NEXT QUESTION ===================== */
-function nextQuestion() {
-  clearInterval(timer);
+async function showResults() {
+  const timeTaken = `${Math.floor((Date.now() - quizStartTime) / 1000)}s`;
+  const payload = {
+    name: studentName, roll: studentRoll, score: `${score}/${quizData.length}`,
+    details: quizDetails, timeTaken: timeTaken
+  };
 
-  const selected = document.querySelector(".selected");
-  if (!selected) {
-    alert("Please select an option");
-    return;
+  try {
+    await fetch(`${BASE_URL}/save`, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        "x-quiz-secret": SECRET_KEY 
+      },
+      body: JSON.stringify(payload)
+    });
+    document.getElementById("quiz-screen").classList.add("hidden");
+    document.getElementById("result-screen").classList.remove("hidden");
+  } catch (err) {
+    console.warn("Failed to save results");
   }
-
-  const choice
+}
