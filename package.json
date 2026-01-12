@@ -6,6 +6,7 @@
     "express": "^5.2.1",
     "googleapis": "^169.0.0",
     "node-fetch": "^3.3.2",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "express-rate-limit": "^7.1.5"
   }
 }
