@@ -10,7 +10,7 @@ app.use(express.json());
 
 /* ===================== ENV CHECK ===================== */
 if (!process.env.SHEET_ID || !process.env.GOOGLE_SERVICE_ACCOUNT || !process.env.API_SECRET_KEY) {
-  throw new Error("Missing required Environment Variables");
+  throw new Error("Missing required Environment Variables: SHEET_ID, GOOGLE_SERVICE_ACCOUNT, or API_SECRET_KEY");
 }
 
 /* ===================== SECURITY MIDDLEWARE ===================== */
@@ -40,7 +40,7 @@ function correctIndex(letter) {
 
 /* ===================== ENDPOINTS ===================== */
 
-// NEW: Check if roll exists in "Attempts" tab within 10 hours
+// NEW: Check "Attempts" tab for 10-hour cooldown
 app.get("/check-roll/:roll", validateSecret, async (req, res) => {
   const { roll } = req.params;
   try {
@@ -51,7 +51,7 @@ app.get("/check-roll/:roll", validateSecret, async (req, res) => {
     const rows = response.data.values || [];
     const tenHoursAgo = Date.now() - (10 * 60 * 60 * 1000);
     
-    // Check from bottom of sheet to find most recent attempt
+    // Check most recent attempt for this roll
     const lastAttempt = [...rows].reverse().find(row => row[0] === roll);
 
     if (lastAttempt && new Date(lastAttempt[1]).getTime() > tenHoursAgo) {
@@ -69,11 +69,13 @@ app.post("/generate-quiz", validateSecret, async (req, res) => {
       spreadsheetId: process.env.QUES_SHEET_ID,
       range: "Sheet1!A2:H"
     });
-    const selected = shuffleArray(response.data.values).slice(0, 10);
+    const rows = response.data.values;
+    const selected = shuffleArray(rows).slice(0, 10);
+
     const quiz = selected.map(row => ({
       question: row[2],
       options: [row[3], row[4], row[5], row[6]],
-      correct: correctIndex(row[7])
+      correct: correctIndex(row[7]) // Re-added for local scoring compatibility
     }));
     res.json(quiz);
   } catch (err) {
@@ -102,7 +104,7 @@ app.post("/save",
       timestamp, name, roll, score, i + 1, d.question, d.chosen, d.correct, d.status
     ]);
     
-    // Log attempt to "Attempts" tab
+    // Save record to "Attempts" tab as well
     const attemptRow = [[roll, timestamp, timeTaken]];
 
     try {
