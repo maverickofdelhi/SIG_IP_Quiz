@@ -8,7 +8,7 @@ let quizDetails = [];
 
 /* ===================== TIMER ===================== */
 let timer = null;
-let timeLeft = 60; // 1 minute per question
+let timeLeft = 60; 
 
 /* ===================== STEP 1: START ===================== */
 async function startQuizProcess() {
@@ -21,7 +21,7 @@ async function startQuizProcess() {
   }
 
   try {
-    // Check for existing attempts
+    // Verify roll number against the 10-hour rule
     const checkResponse = await fetch(`https://sig-ip-quiz.onrender.com/check-roll/${studentRoll}`);
     const checkData = await checkResponse.json();
 
@@ -30,13 +30,14 @@ async function startQuizProcess() {
       return;
     }
 
+    // Proceed if allowed
     document.getElementById("registration-screen").classList.add("hidden");
     document.getElementById("setup-screen").classList.remove("hidden");
 
     generateQuiz();
   } catch (err) {
     console.error(err);
-    alert("Validation failed. Please try again later.");
+    alert("Validation failed. Please check your internet connection.");
   }
 }
 
@@ -72,21 +73,16 @@ function loadQuestion() {
 
   const q = quizData[currentIdx];
 
-  // Question number + text
-  questionText.innerText =
-    `Question ${currentIdx + 1} of ${quizData.length}\n\n${q.question}`;
-
+  questionText.innerText = `Question ${currentIdx + 1} of ${quizData.length}\n\n${q.question}`;
   optionsContainer.innerHTML = "";
   nextBtn.style.display = "none";
 
-  // Reset timer
   clearInterval(timer);
   timeLeft = 60;
   timerEl.innerText = "Time left: 01:00";
 
   timer = setInterval(() => {
     timeLeft--;
-
     const minutes = String(Math.floor(timeLeft / 60)).padStart(2, "0");
     const seconds = String(timeLeft % 60).padStart(2, "0");
     timerEl.innerText = `Time left: ${minutes}:${seconds}`;
@@ -97,7 +93,6 @@ function loadQuestion() {
     }
   }, 1000);
 
-  // Render options
   q.options.forEach((opt, idx) => {
     const btn = document.createElement("button");
     btn.className = "option-btn";
@@ -105,52 +100,36 @@ function loadQuestion() {
     btn.dataset.choice = idx;
 
     btn.onclick = () => {
-      document
-        .querySelectorAll(".option-btn")
-        .forEach(b => b.classList.remove("selected"));
-
+      document.querySelectorAll(".option-btn").forEach(b => b.classList.remove("selected"));
       btn.classList.add("selected");
       nextBtn.style.display = "block";
     };
-
     optionsContainer.appendChild(btn);
   });
 }
 
-/* ===================== AUTO SUBMIT (TIMEOUT) ===================== */
 function autoSubmit() {
   const currentQ = quizData[currentIdx];
-
   quizDetails.push({
     question: currentQ.question,
     chosen: "Not Answered",
     correct: currentQ.options[currentQ.correct],
     status: "WRONG"
   });
-
   currentIdx++;
-
-  if (currentIdx < quizData.length) {
-    loadQuestion();
-  } else {
-    showResults();
-  }
+  if (currentIdx < quizData.length) loadQuestion();
+  else showResults();
 }
 
-/* ===================== STEP 4: NEXT QUESTION ===================== */
 function nextQuestion() {
   clearInterval(timer);
-
   const selected = document.querySelector(".selected");
-
   if (!selected) {
     alert("Please select an option");
     return;
   }
-
   const choiceIdx = parseInt(selected.dataset.choice, 10);
   const currentQ = quizData[currentIdx];
-
   const isCorrect = choiceIdx === currentQ.correct;
   if (isCorrect) score++;
 
@@ -162,18 +141,13 @@ function nextQuestion() {
   });
 
   currentIdx++;
-
-  if (currentIdx < quizData.length) {
-    loadQuestion();
-  } else {
-    showResults();
-  }
+  if (currentIdx < quizData.length) loadQuestion();
+  else showResults();
 }
 
 /* ===================== STEP 5: RESULTS ===================== */
 async function showResults() {
   clearInterval(timer);
-
   document.getElementById("quiz-screen").classList.add("hidden");
   document.getElementById("result-screen").classList.remove("hidden");
 
@@ -190,7 +164,7 @@ async function showResults() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    console.log("Results saved successfully");
+    console.log("Results and attempt logged successfully");
   } catch {
     console.warn("Failed to save results");
   }
