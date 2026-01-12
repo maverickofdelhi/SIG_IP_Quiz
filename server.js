@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { google } = require("googleapis");
-const { body, validationResult } = require("express-validator"); // Security: Validator
+const { body, validationResult } = require("express-validator");
 
 const app = express();
 app.use(cors());
@@ -40,20 +40,22 @@ function correctIndex(letter) {
 
 /* ===================== ENDPOINTS ===================== */
 
-// Check previous attempts
+// NEW: Check if roll exists in "Attempts" tab within 10 hours
 app.get("/check-roll/:roll", validateSecret, async (req, res) => {
   const { roll } = req.params;
   try {
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.SHEET_ID,
-      range: "Attempts!A:B"
+      range: "Attempts!A:B" // Column A: Roll, B: Timestamp
     });
     const rows = response.data.values || [];
     const tenHoursAgo = Date.now() - (10 * 60 * 60 * 1000);
+    
+    // Check from bottom of sheet to find most recent attempt
     const lastAttempt = [...rows].reverse().find(row => row[0] === roll);
 
     if (lastAttempt && new Date(lastAttempt[1]).getTime() > tenHoursAgo) {
-      return res.json({ allowed: false, message: "Already attempted within 10 hours." });
+      return res.json({ allowed: false, message: "You have already attempted the quiz. Please try again after 10 hours." });
     }
     res.json({ allowed: true });
   } catch (err) {
@@ -61,7 +63,6 @@ app.get("/check-roll/:roll", validateSecret, async (req, res) => {
   }
 });
 
-// Generate Quiz
 app.post("/generate-quiz", validateSecret, async (req, res) => {
   try {
     const response = await sheets.spreadsheets.values.get({
@@ -80,7 +81,6 @@ app.post("/generate-quiz", validateSecret, async (req, res) => {
   }
 });
 
-// Secure Save with Body Validation
 app.post("/save", 
   validateSecret, 
   [
@@ -97,9 +97,12 @@ app.post("/save",
 
     const { name, roll, score, details, timeTaken } = req.body;
     const timestamp = new Date().toLocaleString();
+    
     const resultRows = details.map((d, i) => [
       timestamp, name, roll, score, i + 1, d.question, d.chosen, d.correct, d.status
     ]);
+    
+    // Log attempt to "Attempts" tab
     const attemptRow = [[roll, timestamp, timeTaken]];
 
     try {
