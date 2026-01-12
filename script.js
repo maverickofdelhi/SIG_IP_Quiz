@@ -1,12 +1,12 @@
 /* ===================== CONFIG ===================== */
-// I have put your exact URL here so you don't need to change it
+// Your correct backend URL
 const BASE_URL = "https://sig-ip-quiz.onrender.com"; 
 
 /* ===================== STATE ===================== */
 let studentName = "";
 let studentRoll = "";
-let quizData = []; // Questions from server (no answers)
-let userAnswers = []; // We store choice indices here
+let quizData = []; 
+let userAnswers = []; 
 let currentIdx = 0;
 let quizStartTime = null;
 
@@ -40,8 +40,8 @@ async function startQuizProcess() {
       return;
     }
 
-    // Fetch Quiz
-    document.getElementById("setup-text").innerText = "Loading secure quiz...";
+    // UPDATED: Changed text to "Loading quiz..."
+    document.getElementById("setup-text").innerText = "Loading quiz...";
     await generateQuiz();
     
   } catch (err) {
@@ -128,7 +128,7 @@ function loadQuestion() {
 function nextQuestion() {
   clearInterval(timer);
   const selectedBtn = document.querySelector(".selected");
-  if (!selectedBtn) return; // Should not happen as btn is hidden
+  if (!selectedBtn) return; 
 
   const choiceIdx = parseInt(selectedBtn.dataset.idx, 10);
   recordAnswer(choiceIdx);
@@ -152,7 +152,7 @@ async function submitQuiz() {
   // Show Loading Screen
   document.getElementById("quiz-screen").classList.add("hidden");
   document.getElementById("setup-screen").classList.remove("hidden");
-  document.getElementById("setup-text").innerText = "Calculating Score & Submitting...";
+  document.getElementById("setup-text").innerText = "Submitting responses..."; // Generic message
   document.querySelector(".loader").style.display = "block";
 
   const timeTaken = `${Math.floor((Date.now() - quizStartTime) / 1000)}s`;
@@ -160,7 +160,7 @@ async function submitQuiz() {
   const payload = {
     name: studentName, 
     roll: studentRoll, 
-    answers: userAnswers, // Sending INDICES only
+    answers: userAnswers, 
     timeTaken: timeTaken
   };
 
@@ -179,16 +179,12 @@ async function submitQuiz() {
       return;
     }
 
-    // Show Final Result
+    // Show Final Result (UPDATED: NO SCORE DISPLAY)
     document.getElementById("setup-screen").classList.add("hidden");
     document.getElementById("result-screen").classList.remove("hidden");
     
-    // Update Result Text
-    document.querySelector("#result-screen p").innerHTML = 
-      `Submitted successfully!<br><br>
-       <span style="font-size: 24px; font-weight: bold; color: #3b82f6">
-         Score: ${result.score}
-       </span>`;
+    // We do NOT update the innerHTML here anymore.
+    // It will simply show the default HTML: "Thank You! Your responses have been recorded."
 
   } catch (err) {
     alert("Submission failed. Please contact admin.");
