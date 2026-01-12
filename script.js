@@ -5,13 +5,12 @@ let quizData = [];
 let currentIdx = 0;
 let score = 0;
 let quizDetails = [];
-let quizStartTime = null; // To track duration
+let quizStartTime = null;
 
-/* ===================== TIMER ===================== */
 let timer = null;
 let timeLeft = 60; 
 
-/* ===================== STEP 1: START ===================== */
+/* ===================== START PROCESS ===================== */
 async function startQuizProcess() {
   studentName = document.getElementById("student-name").value.trim();
   studentRoll = document.getElementById("student-roll").value.trim();
@@ -21,12 +20,21 @@ async function startQuizProcess() {
     return;
   }
 
+  // UI Feedback: Disable button
+  const startBtn = document.querySelector("button[onclick='startQuizProcess()']");
+  if(startBtn) startBtn.disabled = true;
+  if(startBtn) startBtn.innerText = "Checking...";
+
   try {
     const checkResponse = await fetch(`https://sig-ip-quiz.onrender.com/check-roll/${studentRoll}`);
     const checkData = await checkResponse.json();
 
     if (!checkData.allowed) {
       alert(checkData.message);
+      if(startBtn) {
+          startBtn.disabled = false;
+          startBtn.innerText = "Start Quiz";
+      }
       return;
     }
 
@@ -35,11 +43,16 @@ async function startQuizProcess() {
 
     generateQuiz();
   } catch (err) {
-    alert("Validation failed. Check your connection.");
+    console.error(err);
+    alert("Connection error. Please try again.");
+    if(startBtn) {
+        startBtn.disabled = false;
+        startBtn.innerText = "Start Quiz";
+    }
   }
 }
 
-/* ===================== STEP 2: FETCH QUIZ ===================== */
+/* ===================== GENERATE QUIZ ===================== */
 async function generateQuiz() {
   try {
     const response = await fetch("https://sig-ip-quiz.onrender.com/generate-quiz", {
@@ -48,7 +61,7 @@ async function generateQuiz() {
     });
 
     quizData = await response.json();
-    quizStartTime = Date.now(); // Record start time
+    quizStartTime = Date.now(); // Start clock
 
     document.getElementById("setup-screen").classList.add("hidden");
     document.getElementById("quiz-screen").classList.remove("hidden");
@@ -59,7 +72,7 @@ async function generateQuiz() {
   }
 }
 
-/* ===================== STEP 3: LOAD QUESTION ===================== */
+/* ===================== LOAD QUESTION ===================== */
 function loadQuestion() {
   const questionText = document.getElementById("question-text");
   const optionsContainer = document.getElementById("options-container");
@@ -126,11 +139,10 @@ function saveStepData(chosen, isCorrect) {
   });
 }
 
-/* ===================== STEP 5: RESULTS ===================== */
+/* ===================== RESULTS ===================== */
 async function showResults() {
   clearInterval(timer);
 
-  // Calculate Duration
   const diff = Math.floor((Date.now() - quizStartTime) / 1000);
   const timeTakenStr = `${Math.floor(diff / 60)}m ${diff % 60}s`;
 
@@ -145,9 +157,13 @@ async function showResults() {
     timeTaken: timeTakenStr
   };
 
-  await fetch("https://sig-ip-quiz.onrender.com/save", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
+  try {
+    await fetch("https://sig-ip-quiz.onrender.com/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  } catch (err) {
+    console.error("Save failed", err);
+  }
 }
