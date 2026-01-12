@@ -48,7 +48,7 @@ app.post("/generate-quiz", async (req, res) => {
     }
 
     // Pick random 5 questions
-    const selected = shuffleArray(rows).slice(0, 5);
+    const selected = shuffleArray(rows).slice(0, 10);
 
     const quiz = selected.map(row => ({
       question: row[2],
@@ -111,3 +111,4 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
 });
+
