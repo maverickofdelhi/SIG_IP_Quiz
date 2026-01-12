@@ -1,14 +1,13 @@
 /* ===================== CONFIG ===================== */
-const BASE_URL = "https://sig-ip-quiz.onrender.com";
-const SECRET_KEY = "YourSecretPassword123"; // Must match your Render Environment Variable
+// CHANGE THIS URL to your actual Render backend URL
+const BASE_URL = "https://sig-ip-quiz.onrender.com"; 
 
 /* ===================== STATE ===================== */
 let studentName = "";
 let studentRoll = "";
-let quizData = [];
+let quizData = []; // Questions from server (no answers)
+let userAnswers = []; // We store choice indices here
 let currentIdx = 0;
-let score = 0;
-let quizDetails = [];
 let quizStartTime = null;
 
 /* ===================== TIMER ===================== */
@@ -25,68 +24,75 @@ async function startQuizProcess() {
     return;
   }
 
+  // UI Update
+  document.getElementById("registration-screen").classList.add("hidden");
+  document.getElementById("setup-screen").classList.remove("hidden");
+  document.getElementById("setup-text").innerText = "Checking eligibility...";
+
   try {
-    const response = await fetch(`${BASE_URL}/check-roll/${studentRoll}`, {
-        headers: { "x-quiz-secret": SECRET_KEY }
-    });
-    const checkData = await response.json();
+    // Check eligibility
+    const checkRes = await fetch(`${BASE_URL}/check-roll/${studentRoll}`);
+    const checkData = await checkRes.json();
 
     if (!checkData.allowed) {
       alert(checkData.message);
+      location.reload();
       return;
     }
 
-    document.getElementById("registration-screen").classList.add("hidden");
-    document.getElementById("setup-screen").classList.remove("hidden");
-
-    generateQuiz();
+    // Fetch Quiz
+    document.getElementById("setup-text").innerText = "Loading secure quiz...";
+    await generateQuiz();
     
   } catch (err) {
-    alert("Verification failed. Please check connection.");
+    console.error(err);
+    alert("Connection failed. Please check your internet.");
+    location.reload();
   }
 }
 
 /* ===================== STEP 2: FETCH QUIZ ===================== */
 async function generateQuiz() {
   try {
-    const response = await fetch(`${BASE_URL}/generate-quiz`, {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "x-quiz-secret": SECRET_KEY 
-        }
-    });
-
+    const response = await fetch(`${BASE_URL}/generate-quiz`);
     quizData = await response.json();
-    quizStartTime = Date.now();
 
+    if (!quizData || quizData.length === 0) throw new Error("No data");
+
+    // Initialize answers array
+    userAnswers = new Array(quizData.length).fill(null);
+    
+    quizStartTime = Date.now();
     document.getElementById("setup-screen").classList.add("hidden");
     document.getElementById("quiz-screen").classList.remove("hidden");
-
     loadQuestion();
+
   } catch (err) {
-    alert("Quiz generation failed");
+    alert("Failed to load questions. Please refresh.");
   }
 }
 
 /* ===================== STEP 3: LOAD QUESTION ===================== */
 function loadQuestion() {
-  const questionText = document.getElementById("question-text");
-  const optionsContainer = document.getElementById("options-container");
-  const nextBtn = document.getElementById("next-btn");
-  const timerEl = document.getElementById("timer");
-
-  // Safeguard: Check if we are past the last question
+  // Check if finished
   if (currentIdx >= quizData.length) {
-    showResults();
+    submitQuiz();
     return;
   }
 
   const q = quizData[currentIdx];
-  questionText.innerText = `Question ${currentIdx + 1} of ${quizData.length}\n\n${q.question}`;
+  
+  // UI Elements
+  document.getElementById("question-text").innerText = `Q${currentIdx + 1}: ${q.question}`;
+  document.getElementById("question-counter").innerText = `${currentIdx + 1} / ${quizData.length}`;
+  const optionsContainer = document.getElementById("options-container");
+  const nextBtn = document.getElementById("next-btn");
+  const timerEl = document.getElementById("timer");
+
   optionsContainer.innerHTML = "";
   nextBtn.style.display = "none";
 
+  // Reset Timer
   clearInterval(timer);
   timeLeft = 60;
   timerEl.innerText = "Time left: 01:00";
@@ -99,85 +105,93 @@ function loadQuestion() {
 
     if (timeLeft <= 0) {
       clearInterval(timer);
-      autoSubmit();
+      recordAnswer(-1); // -1 means skipped/timeout
     }
   }, 1000);
 
+  // Render Options
   q.options.forEach((opt, idx) => {
     const btn = document.createElement("button");
     btn.className = "option-btn";
     btn.innerText = opt;
-    btn.dataset.choice = idx;
     btn.onclick = () => {
       document.querySelectorAll(".option-btn").forEach(b => b.classList.remove("selected"));
       btn.classList.add("selected");
+      // Store temporarily selected index
+      btn.dataset.idx = idx; 
       nextBtn.style.display = "block";
     };
     optionsContainer.appendChild(btn);
   });
 }
 
-function autoSubmit() {
-  const currentQ = quizData[currentIdx];
-  quizDetails.push({
-    question: currentQ.question, 
-    chosen: "Not Answered",
-    correct: currentQ.options[currentQ.correct], 
-    status: "WRONG"
-  });
-  currentIdx++;
-  loadQuestion();
-}
-
 function nextQuestion() {
   clearInterval(timer);
-  const selected = document.querySelector(".selected");
-  if (!selected) return alert("Please select an option");
+  const selectedBtn = document.querySelector(".selected");
+  if (!selectedBtn) return; // Should not happen as btn is hidden
 
-  const choiceIdx = parseInt(selected.dataset.choice, 10);
-  const currentQ = quizData[currentIdx];
-  
-  // FIX: This line was crashing because it didn't check if currentQ exists
-  const isCorrect = choiceIdx === currentQ.correct;
-  if (isCorrect) score++;
+  const choiceIdx = parseInt(selectedBtn.dataset.idx, 10);
+  recordAnswer(choiceIdx);
+}
 
-  quizDetails.push({
-    question: currentQ.question,
-    chosen: currentQ.options[choiceIdx],
-    correct: currentQ.options[currentQ.correct],
-    status: isCorrect ? "CORRECT" : "WRONG"
-  });
+function recordAnswer(choiceIdx) {
+  // Store answer: { id: questionID, selected: index }
+  userAnswers[currentIdx] = {
+    id: quizData[currentIdx].id,
+    selected: choiceIdx
+  };
 
   currentIdx++;
   loadQuestion();
 }
 
-/* ===================== STEP 5: RESULTS ===================== */
-async function showResults() {
+/* ===================== STEP 4: SUBMIT & GRADE ===================== */
+async function submitQuiz() {
   clearInterval(timer);
-  const timeTaken = `${Math.floor((Date.now() - quizStartTime) / 1000)}s`;
-
+  
+  // Show Loading Screen
   document.getElementById("quiz-screen").classList.add("hidden");
-  document.getElementById("result-screen").classList.remove("hidden");
+  document.getElementById("setup-screen").classList.remove("hidden");
+  document.getElementById("setup-text").innerText = "Calculating Score & Submitting...";
+  document.querySelector(".loader").style.display = "block";
+
+  const timeTaken = `${Math.floor((Date.now() - quizStartTime) / 1000)}s`;
 
   const payload = {
     name: studentName, 
     roll: studentRoll, 
-    score: `${score}/${quizData.length}`,
-    details: quizDetails, 
+    answers: userAnswers, // Sending INDICES only
     timeTaken: timeTaken
   };
 
   try {
-    await fetch(`${BASE_URL}/save`, {
+    const response = await fetch(`${BASE_URL}/submit-quiz`, {
       method: "POST",
-      headers: { 
-        "Content-Type": "application/json",
-        "x-quiz-secret": SECRET_KEY 
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
+
+    const result = await response.json();
+
+    if (result.error) {
+      alert("Error: " + result.error);
+      location.reload();
+      return;
+    }
+
+    // Show Final Result
+    document.getElementById("setup-screen").classList.add("hidden");
+    document.getElementById("result-screen").classList.remove("hidden");
+    
+    // Update Result Text
+    document.querySelector("#result-screen p").innerHTML = 
+      `Submitted successfully!<br><br>
+       <span style="font-size: 24px; font-weight: bold; color: #3b82f6">
+         Score: ${result.score}
+       </span>`;
+
   } catch (err) {
-    console.warn("Save failed");
+    alert("Submission failed. Please contact admin.");
+    console.error(err);
   }
 }
