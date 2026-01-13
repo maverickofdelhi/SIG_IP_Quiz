@@ -12,7 +12,7 @@ let quizStartTime = null;
 
 /* ===================== TIMER ===================== */
 let timer = null;
-let timeLeft = 60;
+let timeLeft = 120;
 
 /* ===================== STEP 1: START ===================== */
 async function startQuizProcess() {
@@ -95,7 +95,7 @@ function loadQuestion() {
   // Reset Timer
   clearInterval(timer);
   timeLeft = 60;
-  timerEl.innerText = "Time left: 01:00";
+  timerEl.innerText = "Time left: 02:00";
 
   timer = setInterval(() => {
     timeLeft--;
@@ -191,3 +191,4 @@ async function submitQuiz() {
     console.error(err);
   }
 }
+
