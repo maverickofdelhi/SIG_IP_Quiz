@@ -94,7 +94,7 @@ function loadQuestion() {
 
   // Reset Timer
   clearInterval(timer);
-  timeLeft = 60;
+  timeLeft = 120;
   timerEl.innerText = "Time left: 02:00";
 
   timer = setInterval(() => {
@@ -191,4 +191,5 @@ async function submitQuiz() {
     console.error(err);
   }
 }
+
 
