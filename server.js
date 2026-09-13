@@ -57,11 +57,17 @@ function letterToIndex(letter) {
 }
 
 function rowToCachedQuestion(row) {
+  const options = [row.option_a, row.option_b, row.option_c, row.option_d].map((o) =>
+    o == null ? "" : String(o)
+  );
+  if (!row.question || options.some((o) => !o.trim())) return null;
+  const correctAnswerIdx = letterToIndex(row.correct);
+  if (correctAnswerIdx < 0) return null;
   return {
     id: row.id,
     question: row.question,
-    options: [row.option_a, row.option_b, row.option_c, row.option_d],
-    correctAnswerIdx: letterToIndex(row.correct),
+    options,
+    correctAnswerIdx,
   };
 }
 
@@ -224,7 +230,7 @@ async function refreshQuestionCache() {
      WHERE active = TRUE
      ORDER BY id`
   );
-  questionCache = rows.map(rowToCachedQuestion);
+  questionCache = rows.map(rowToCachedQuestion).filter(Boolean);
   console.log(`Question cache loaded: ${questionCache.length} active questions.`);
 }
 
@@ -267,7 +273,7 @@ app.get("/check-roll/:roll", async (req, res) => {
     res.json({ allowed: true });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Check failed" });
+    res.status(500).json({ allowed: false, error: "Check failed" });
   }
 });
 
@@ -276,8 +282,12 @@ app.get("/generate-quiz", (_req, res) => {
     if (questionCache.length === 0) {
       return res.status(503).json({ error: "No questions available" });
     }
-    const shuffled = [...questionCache].sort(() => 0.5 - Math.random());
-    const picked = shuffled.slice(0, 10);
+    const shuffled = [...questionCache];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const picked = shuffled.slice(0, Math.min(10, shuffled.length));
     const clientQuiz = picked.map((q) => ({
       id: q.id,
       question: q.question,
@@ -293,7 +303,7 @@ app.get("/generate-quiz", (_req, res) => {
 app.post(
   "/submit-quiz",
   [
-    body("name").trim().escape(),
+    body("name").trim(),
     body("roll").trim().notEmpty(),
     body("answers").isArray(),
     body("timeTaken").isString(),
@@ -319,15 +329,17 @@ app.post(
     const byId = new Map(questionCache.map((q) => [q.id, q]));
 
     answers.forEach((ans) => {
+      if (!ans || ans.id == null) return;
       const originalQ = byId.get(ans.id);
       if (!originalQ) return;
 
-      const isCorrect = ans.selected === originalQ.correctAnswerIdx;
+      const selected = Number(ans.selected);
+      const isCorrect = selected === originalQ.correctAnswerIdx;
       if (isCorrect) score++;
 
       detailsLog.push({
         q: originalQ.question,
-        chosen: originalQ.options[ans.selected] || "Skipped",
+        chosen: originalQ.options[selected] || "Skipped",
         correct: originalQ.options[originalQ.correctAnswerIdx],
         status: isCorrect ? "CORRECT" : "WRONG",
       });
@@ -340,20 +352,36 @@ app.post(
     };
 
     try {
-      const insert = await pool.query(
-        `INSERT INTO attempts (roll, name, score, total, time_taken, answers)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-         ON CONFLICT (roll) DO NOTHING
-         RETURNING id`,
-        [safeRoll, safeName, score, total, safeTime, JSON.stringify(payload)]
+      const existing = await pool.query(
+        "SELECT submitted_at FROM attempts WHERE roll = $1 LIMIT 1",
+        [safeRoll]
       );
 
-      if (insert.rowCount === 0) {
-        return res.status(403).json({ error: "Already submitted or cooldown active." });
+      if (existing.rows.length > 0) {
+        const submittedAt = new Date(existing.rows[0].submitted_at).getTime();
+        if (Date.now() - submittedAt < COOLDOWN_MS) {
+          return res.status(403).json({ error: "Cooldown active. Submission rejected." });
+        }
+
+        await pool.query(
+          `UPDATE attempts
+           SET name = $2, score = $3, total = $4, time_taken = $5, answers = $6::jsonb, submitted_at = NOW()
+           WHERE roll = $1`,
+          [safeRoll, safeName, score, total, safeTime, JSON.stringify(payload)]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO attempts (roll, name, score, total, time_taken, answers)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+          [safeRoll, safeName, score, total, safeTime, JSON.stringify(payload)]
+        );
       }
 
       res.json({ success: true });
     } catch (err) {
+      if (err && err.code === "23505") {
+        return res.status(403).json({ error: "Already submitted or cooldown active." });
+      }
       console.error(err);
       res.status(500).json({ error: "Save failed" });
     }
