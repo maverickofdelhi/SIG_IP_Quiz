@@ -1,0 +1,26 @@
+[
+  {
+    "question": "Placeholder: What does IP typically stand for in this SIG?",
+    "A": "Internet Protocol",
+    "B": "Intellectual Property",
+    "C": "Internal Process",
+    "D": "Indexed Page",
+    "correct": "B"
+  },
+  {
+    "question": "Placeholder: Which option is a patent?",
+    "A": "A brand name",
+    "B": "A secret recipe kept confidential",
+    "C": "An exclusive right to an invention",
+    "D": "A company logo drawing",
+    "correct": "C"
+  },
+  {
+    "question": "Placeholder: Copyright protects which of the following?",
+    "A": "Original literary and artistic works",
+    "B": "Functional mechanical inventions only",
+    "C": "Geographic place names",
+    "D": "Telephone numbers",
+    "correct": "A"
+  }
+]

@@ -1,159 +1,288 @@
 require("dotenv").config();
+const fs = require("fs");
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
-const { google } = require("googleapis");
+const { Pool } = require("pg");
 const { body, validationResult } = require("express-validator");
-const rateLimit = require("express-rate-limit"); 
+const rateLimit = require("express-rate-limit");
 
 const app = express();
+app.set("trust proxy", 1);
+const PORT = process.env.PORT || 5000;
+const COOLDOWN_MS = 10 * 60 * 60 * 1000;
+const CACHE_REFRESH_MS = 5 * 60 * 1000;
 
-/* ===================== SECURITY: CORS ===================== */
-// strict origin check: Replace with your actual frontend URL when deploying
-app.use(cors({
-  origin: "*", 
-  methods: ["GET", "POST"]
-}));
+if (!process.env.DATABASE_URL) {
+  throw new Error("Missing required environment variable: DATABASE_URL");
+}
+if (!process.env.ADMIN_SECRET) {
+  throw new Error("Missing required environment variable: ADMIN_SECRET");
+}
 
-/* ===================== SECURITY: RATE LIMITING ===================== */
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: Number(process.env.PG_POOL_MAX || 20),
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 10_000,
+  keepAlive: true,
+});
+
+/* Campus NAT: many students share one IP. Do not use a tight per-IP cap.
+   Double-submit is blocked by UNIQUE(roll) on attempts. */
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-  message: { error: "Too many requests, please try again later." }
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_MAX || 100_000),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.path === "/health",
+  message: { error: "Too many requests, please try again later." },
 });
+
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST"],
+}));
 app.use(limiter);
+app.use(express.json({ limit: "2mb" }));
+app.use(express.text({ type: ["text/csv", "text/plain"], limit: "2mb" }));
 
-app.use(express.json());
+let questionCache = [];
+let cacheTimer = null;
 
-/* ===================== ENV CHECK ===================== */
-if (!process.env.SHEET_ID || !process.env.GOOGLE_SERVICE_ACCOUNT || !process.env.QUES_SHEET_ID) {
-  throw new Error("Missing required Environment Variables");
+function letterToIndex(letter) {
+  const map = { A: 0, B: 1, C: 2, D: 3 };
+  return map[String(letter || "").trim().toUpperCase()] ?? -1;
 }
 
-/* ===================== GOOGLE SHEETS SETUP ===================== */
-const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT),
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-});
-const sheets = google.sheets({ version: "v4", auth });
-
-/* ===================== HELPERS ===================== */
-function correctIndex(letter) {
-  const map = { 'A': 0, 'B': 1, 'C': 2, 'D': 3 };
-  return map[letter.toUpperCase()] !== undefined ? map[letter.toUpperCase()] : -1;
+function rowToCachedQuestion(row) {
+  return {
+    id: row.id,
+    question: row.question,
+    options: [row.option_a, row.option_b, row.option_c, row.option_d],
+    correctAnswerIdx: letterToIndex(row.correct),
+  };
 }
 
-function sanitizeInput(input) {
-  if (typeof input !== 'string') return input;
-  const dangerousPrefixes = ['=', '+', '-', '@'];
-  if (dangerousPrefixes.some(prefix => input.trim().startsWith(prefix))) {
-    return `'${input}`;
+function normalizeQuestionPayload(item) {
+  const question = String(item.question || "").trim();
+  const option_a = String(item.option_a ?? item.A ?? "").trim();
+  const option_b = String(item.option_b ?? item.B ?? "").trim();
+  const option_c = String(item.option_c ?? item.C ?? "").trim();
+  const option_d = String(item.option_d ?? item.D ?? "").trim();
+  const correct = String(item.correct || "").trim().toUpperCase();
+
+  if (!question || !option_a || !option_b || !option_c || !option_d) {
+    return null;
   }
-  return input;
-}
-
-// Cache helper to avoid hitting Google API too often
-let cachedQuestions = [];
-let lastCacheTime = 0;
-
-async function getMasterQuestions() {
-  const now = Date.now();
-  // Refresh cache every 10 minutes
-  if (cachedQuestions.length > 0 && (now - lastCacheTime < 10 * 60 * 1000)) {
-    return cachedQuestions;
+  if (!["A", "B", "C", "D"].includes(correct)) {
+    return null;
   }
-
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: process.env.QUES_SHEET_ID,
-    range: "Sheet1!A2:H"
-  });
-  
-  const rows = response.data.values || [];
-  
-  cachedQuestions = rows.map((row, index) => ({
-    id: index, 
-    question: row[2],
-    options: [row[3], row[4], row[5], row[6]],
-    correctAnswerIdx: correctIndex(row[7]) 
-  }));
-  
-  lastCacheTime = now;
-  return cachedQuestions;
+  return { question, option_a, option_b, option_c, option_d, correct };
 }
 
-/* ===================== NEW: MEMORY CACHE SYSTEM (DDoS Protection) ===================== */
-let attemptsCache = new Map(); // Stores "Roll Number" -> "Last Attempt Time"
-let isCacheLoaded = false;
+function requireAdmin(req, res, next) {
+  const secret = req.get("X-Admin-Secret");
+  if (!secret || secret !== process.env.ADMIN_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+}
 
-// Load data from Sheet into RAM once on startup
-async function loadAttemptsCache() {
-  try {
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.SHEET_ID,
-      range: "Attempts!A:B" // Column A=Roll, B=Timestamp
-    });
-    
-    const rows = response.data.values || [];
-    attemptsCache.clear(); 
-    
-    // Populate Map (Key: Roll, Value: Timestamp)
-    rows.forEach(row => {
-      if (row[0]) { 
-        attemptsCache.set(row[0].trim(), new Date(row[1]).getTime());
+function csvEscape(value) {
+  const str = value == null ? "" : String(value);
+  if (/[",\n\r]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function parseCsvRows(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+  const src = String(text || "").replace(/^\uFEFF/, "");
+
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += ch;
       }
-    });
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (ch === "\n") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else if (ch !== "\r") {
+      cell += ch;
+    }
+  }
+  if (cell.length || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows.filter((r) => r.some((c) => String(c).trim() !== ""));
+}
 
-    isCacheLoaded = true;
-    console.log(`✅ Cache Loaded: ${attemptsCache.size} past attempts found.`);
+function csvRowsToQuestionItems(text) {
+  const rows = parseCsvRows(text);
+  if (rows.length === 0) return [];
+
+  const header = rows[0].map((h) => String(h).trim().toLowerCase());
+  const hasHeader = header.includes("question") && header.includes("correct");
+  const dataRows = hasHeader ? rows.slice(1) : rows;
+
+  const col = (names, fallback) => {
+    for (const name of names) {
+      const i = header.indexOf(name);
+      if (hasHeader && i >= 0) return i;
+    }
+    return fallback;
+  };
+
+  const qi = col(["question"], 0);
+  const ai = col(["a", "option_a"], 1);
+  const bi = col(["b", "option_b"], 2);
+  const ci = col(["c", "option_c"], 3);
+  const di = col(["d", "option_d"], 4);
+  const ki = col(["correct"], 5);
+
+  return dataRows.map((r) => ({
+    question: r[qi],
+    A: r[ai],
+    B: r[bi],
+    C: r[ci],
+    D: r[di],
+    correct: r[ki],
+  }));
+}
+
+function parseAdminQuestionBody(body) {
+  if (Array.isArray(body)) return body;
+  if (body && Array.isArray(body.questions)) return body.questions;
+  if (typeof body === "string") return csvRowsToQuestionItems(body);
+  return null;
+}
+
+async function applySchema() {
+  const schemaPath = path.join(__dirname, "db", "schema.sql");
+  const sql = fs.readFileSync(schemaPath, "utf8");
+  await pool.query(sql);
+}
+
+async function seedQuestionsIfEmpty() {
+  const { rows } = await pool.query("SELECT COUNT(*)::int AS n FROM questions");
+  if (rows[0].n > 0) return;
+
+  const seedPath = path.join(__dirname, "questions.json");
+  if (!fs.existsSync(seedPath)) return;
+
+  const raw = JSON.parse(fs.readFileSync(seedPath, "utf8"));
+  if (!Array.isArray(raw) || raw.length === 0) return;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const item of raw) {
+      const q = normalizeQuestionPayload(item);
+      if (!q) continue;
+      await client.query(
+        `INSERT INTO questions (question, option_a, option_b, option_c, option_d, correct, active)
+         VALUES ($1, $2, $3, $4, $5, $6, TRUE)`,
+        [q.question, q.option_a, q.option_b, q.option_c, q.option_d, q.correct]
+      );
+    }
+    await client.query("COMMIT");
+    console.log("Seeded questions from questions.json (table was empty).");
   } catch (err) {
-    console.error("❌ Failed to load attempts cache:", err);
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
 }
 
-// New Check Function: Uses RAM instead of Google API
+async function refreshQuestionCache() {
+  const { rows } = await pool.query(
+    `SELECT id, question, option_a, option_b, option_c, option_d, correct
+     FROM questions
+     WHERE active = TRUE
+     ORDER BY id`
+  );
+  questionCache = rows.map(rowToCachedQuestion);
+  console.log(`Question cache loaded: ${questionCache.length} active questions.`);
+}
+
 async function checkCooldown(roll) {
-  // Failsafe: If cache isn't ready, load it
-  if (!isCacheLoaded) await loadAttemptsCache();
-
-  const lastAttemptTime = attemptsCache.get(roll);
-  if (!lastAttemptTime) return true; // No record = Allowed
-
-  const tenHoursAgo = Date.now() - (10 * 60 * 60 * 1000);
-  
-  // If last attempt was recent (< 10 hours), BLOCK THEM
-  if (lastAttemptTime > tenHoursAgo) {
-    return false; 
-  }
-  return true; 
+  const { rows } = await pool.query(
+    "SELECT submitted_at FROM attempts WHERE roll = $1 LIMIT 1",
+    [roll]
+  );
+  if (rows.length === 0) return true;
+  const submittedAt = new Date(rows[0].submitted_at).getTime();
+  return Date.now() - submittedAt >= COOLDOWN_MS;
 }
 
-/* ===================== ENDPOINTS ===================== */
+app.get("/health", async (_req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.json({
+      ok: true,
+      questionsCached: questionCache.length,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(503).json({ ok: false, error: "Database unavailable" });
+  }
+});
 
-// 1. Initial Check
 app.get("/check-roll/:roll", async (req, res) => {
   try {
-    const allowed = await checkCooldown(req.params.roll);
+    const roll = String(req.params.roll || "").trim();
+    if (!roll) {
+      return res.status(400).json({ allowed: false, message: "Roll is required." });
+    }
+    const allowed = await checkCooldown(roll);
     if (!allowed) {
-      return res.json({ allowed: false, message: "Cooldown active. Try again later." });
+      return res.json({
+        allowed: false,
+        message: "Cooldown active. Try again later.",
+      });
     }
     res.json({ allowed: true });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Check failed" });
   }
 });
 
-// 2. Generate Quiz
-app.get("/generate-quiz", async (req, res) => {
+app.get("/generate-quiz", (_req, res) => {
   try {
-    const allQuestions = await getMasterQuestions();
-    
-    const shuffled = [...allQuestions].sort(() => 0.5 - Math.random()).slice(0, 10);
-
-    const clientQuiz = shuffled.map(q => ({
-      id: q.id, 
+    if (questionCache.length === 0) {
+      return res.status(503).json({ error: "No questions available" });
+    }
+    const shuffled = [...questionCache].sort(() => 0.5 - Math.random());
+    const picked = shuffled.slice(0, 10);
+    const clientQuiz = picked.map((q) => ({
+      id: q.id,
       question: q.question,
-      options: q.options
+      options: q.options,
     }));
-
     res.json(clientQuiz);
   } catch (err) {
     console.error(err);
@@ -161,93 +290,175 @@ app.get("/generate-quiz", async (req, res) => {
   }
 });
 
-// 3. Submit & Grade
-app.post("/submit-quiz", 
+app.post(
+  "/submit-quiz",
   [
-    body('name').trim().escape(),
-    body('roll').trim().notEmpty(),
-    body('answers').isArray(), 
-    body('timeTaken').isString()
+    body("name").trim().escape(),
+    body("roll").trim().notEmpty(),
+    body("answers").isArray(),
+    body("timeTaken").isString(),
   ],
   async (req, res) => {
-    
     const errors = validationResult(req);
-    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
 
     const { name, roll, answers, timeTaken } = req.body;
-    const timestamp = new Date().toLocaleString();
+    const safeRoll = String(roll).trim();
+    const safeName = String(name || "").trim();
+    const safeTime = String(timeTaken || "").trim();
 
-    // 1. SECURITY: Re-Check Cooldown (Using RAM Cache)
-    const isAllowed = await checkCooldown(roll);
-    if (!isAllowed) {
+    const allowed = await checkCooldown(safeRoll);
+    if (!allowed) {
       return res.status(403).json({ error: "Cooldown active. Submission rejected." });
     }
 
-    // 2. LOGIC: Calculate Score
-    const masterQuestions = await getMasterQuestions();
     let score = 0;
     const detailsLog = [];
+    const byId = new Map(questionCache.map((q) => [q.id, q]));
 
-    answers.forEach(ans => {
-      const originalQ = masterQuestions.find(mq => mq.id === ans.id);
-      
-      if (originalQ) {
-        const isCorrect = (ans.selected === originalQ.correctAnswerIdx);
-        if (isCorrect) score++;
+    answers.forEach((ans) => {
+      const originalQ = byId.get(ans.id);
+      if (!originalQ) return;
 
-        detailsLog.push({
-          q: originalQ.question,
-          chosen: originalQ.options[ans.selected] || "Skipped",
-          correct: originalQ.options[originalQ.correctAnswerIdx],
-          status: isCorrect ? "CORRECT" : "WRONG"
-        });
-      }
+      const isCorrect = ans.selected === originalQ.correctAnswerIdx;
+      if (isCorrect) score++;
+
+      detailsLog.push({
+        q: originalQ.question,
+        chosen: originalQ.options[ans.selected] || "Skipped",
+        correct: originalQ.options[originalQ.correctAnswerIdx],
+        status: isCorrect ? "CORRECT" : "WRONG",
+      });
     });
 
-    const finalScore = `${score}/${answers.length}`;
-
-    // 3. STORAGE
-    const safeName = sanitizeInput(name);
-    const safeRoll = sanitizeInput(roll);
-    const safeTime = sanitizeInput(timeTaken);
-
-    const resultRows = detailsLog.map((d, i) => [
-      timestamp, safeName, safeRoll, finalScore, i + 1, d.q, d.chosen, d.correct, d.status
-    ]);
-    const attemptRow = [[safeRoll, timestamp, safeTime, finalScore]];
-
-    // === NEW: UPDATE CACHE IMMEDIATELY ===
-    // This prevents double-submission instantly
-    attemptsCache.set(safeRoll, Date.now());
-    // =====================================
+    const total = answers.length;
+    const payload = {
+      submitted: answers,
+      details: detailsLog,
+    };
 
     try {
-      // Save Detailed Logs
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: process.env.SHEET_ID,
-        range: "Sheet1!A:I",
-        valueInputOption: "USER_ENTERED",
-        requestBody: { values: resultRows }
-      });
-      // Save Attempt Metadata
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: process.env.SHEET_ID,
-        range: "Attempts!A:D",
-        valueInputOption: "USER_ENTERED",
-        requestBody: { values: attemptRow }
-      });
+      const insert = await pool.query(
+        `INSERT INTO attempts (roll, name, score, total, time_taken, answers)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+         ON CONFLICT (roll) DO NOTHING
+         RETURNING id`,
+        [safeRoll, safeName, score, total, safeTime, JSON.stringify(payload)]
+      );
 
-      res.json({ success: true, score: finalScore });
+      if (insert.rowCount === 0) {
+        return res.status(403).json({ error: "Already submitted or cooldown active." });
+      }
 
+      res.json({ success: true });
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "Save failed" });
     }
+  }
+);
+
+app.post("/admin/questions", requireAdmin, async (req, res) => {
+  const incoming = parseAdminQuestionBody(req.body);
+  if (!incoming || incoming.length === 0) {
+    return res.status(400).json({
+      error: "Expected a non-empty JSON array of questions, or a CSV body (question,A,B,C,D,correct).",
+    });
+  }
+
+  const normalized = [];
+  for (let i = 0; i < incoming.length; i++) {
+    const q = normalizeQuestionPayload(incoming[i]);
+    if (!q) {
+      return res.status(400).json({
+        error: `Invalid question at index ${i}. Need question, A/B/C/D (or option_a-d), and correct A|B|C|D.`,
+      });
+    }
+    normalized.push(q);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "UPDATE questions SET active = FALSE, updated_at = NOW() WHERE active = TRUE"
+    );
+    for (const q of normalized) {
+      await client.query(
+        `INSERT INTO questions (question, option_a, option_b, option_c, option_d, correct, active, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW())`,
+        [q.question, q.option_a, q.option_b, q.option_c, q.option_d, q.correct]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
+    return res.status(500).json({ error: "Failed to replace question bank." });
+  } finally {
+    client.release();
+  }
+
+  try {
+    await refreshQuestionCache();
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Questions saved but cache refresh failed." });
+  }
+
+  res.json({ success: true, active: questionCache.length });
 });
 
-const PORT = process.env.PORT || 5000;
-// FIXED: Load cache when server starts
-app.listen(PORT, async () => {
-  console.log(`Server running on ${PORT}`);
-  await loadAttemptsCache(); 
+app.get("/admin/results.csv", requireAdmin, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT roll, name, score, total, time_taken, submitted_at, answers
+       FROM attempts
+       ORDER BY submitted_at ASC`
+    );
+
+    const header = ["roll", "name", "score", "total", "time_taken", "submitted_at", "answers"];
+    const lines = [header.join(",")];
+    for (const row of rows) {
+      lines.push(
+        [
+          csvEscape(row.roll),
+          csvEscape(row.name),
+          csvEscape(row.score),
+          csvEscape(row.total),
+          csvEscape(row.time_taken),
+          csvEscape(row.submitted_at ? new Date(row.submitted_at).toISOString() : ""),
+          csvEscape(JSON.stringify(row.answers)),
+        ].join(",")
+      );
+    }
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=quiz-results.csv");
+    res.send(lines.join("\n"));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Export failed" });
+  }
+});
+
+async function boot() {
+  await applySchema();
+  await seedQuestionsIfEmpty();
+  await refreshQuestionCache();
+  cacheTimer = setInterval(() => {
+    refreshQuestionCache().catch((err) => console.error("Cache refresh failed:", err));
+  }, CACHE_REFRESH_MS);
+  if (cacheTimer.unref) cacheTimer.unref();
+
+  app.listen(PORT, () => {
+    console.log(`Server running on ${PORT}`);
+  });
+}
+
+boot().catch((err) => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
 });
