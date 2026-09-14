@@ -2,6 +2,8 @@
 const BASE_URL = "https://sig-ip-quiz.onrender.com";
 const FETCH_TIMEOUT_MS = 15_000;
 const QUESTION_SECONDS = 120;
+const ROLL_TWO_DIGIT_PREFIXES = ["20", "19", "34", "35"];
+const ROLL_ONE_DIGIT_PREFIXES = { 6: "06", 7: "07", 8: "08", 9: "09" };
 
 /* ===================== STATE ===================== */
 let studentName = "";
@@ -33,6 +35,46 @@ async function fetchWithTimeout(url, options = {}) {
   }
 }
 
+function normalizeRoll(raw) {
+  const digits = String(raw || "").trim().replace(/\D/g, "");
+  if (!digits) {
+    return { error: "Enter a valid roll number." };
+  }
+
+  const stripped = digits.replace(/^0+/, "");
+  if (!stripped) {
+    return { error: "Enter a valid roll number." };
+  }
+
+  let prefix = null;
+  let body = null;
+
+  for (let i = 0; i < ROLL_TWO_DIGIT_PREFIXES.length; i++) {
+    const p = ROLL_TWO_DIGIT_PREFIXES[i];
+    if (stripped.indexOf(p) === 0) {
+      prefix = p;
+      body = stripped.slice(p.length);
+      break;
+    }
+  }
+
+  if (!prefix) {
+    const mapped = ROLL_ONE_DIGIT_PREFIXES[stripped.charAt(0)];
+    if (mapped) {
+      prefix = mapped;
+      body = stripped.slice(1);
+    }
+  }
+
+  if (!prefix || !body) {
+    return {
+      error: "Roll number must start with 06, 07, 08, 09, 19, 20, 34, or 35.",
+    };
+  }
+
+  return { roll: prefix + body };
+}
+
 function setStartButtonDisabled(disabled) {
   const btn = document.getElementById("start-btn");
   if (btn) btn.disabled = disabled;
@@ -45,14 +87,23 @@ async function startQuizProcess() {
   setStartButtonDisabled(true);
 
   studentName = document.getElementById("student-name").value.trim();
-  studentRoll = document.getElementById("student-roll").value.trim();
+  const parsedRoll = normalizeRoll(document.getElementById("student-roll").value);
 
-  if (!studentName || !studentRoll) {
+  if (!studentName) {
     alert("Please fill in all details!");
     startInFlight = false;
     setStartButtonDisabled(false);
     return;
   }
+
+  if (parsedRoll.error) {
+    alert(parsedRoll.error);
+    startInFlight = false;
+    setStartButtonDisabled(false);
+    return;
+  }
+
+  studentRoll = parsedRoll.roll;
 
   document.getElementById("registration-screen").classList.add("hidden");
   document.getElementById("setup-screen").classList.remove("hidden");

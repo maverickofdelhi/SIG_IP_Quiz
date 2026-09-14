@@ -10,8 +10,11 @@ const rateLimit = require("express-rate-limit");
 const app = express();
 app.set("trust proxy", 1);
 const PORT = process.env.PORT || 5000;
-const COOLDOWN_MS = 10 * 60 * 60 * 1000;
+const COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const CACHE_REFRESH_MS = 5 * 60 * 1000;
+const ROLL_TWO_DIGIT_PREFIXES = ["20", "19", "34", "35"];
+const ROLL_ONE_DIGIT_PREFIXES = { 6: "06", 7: "07", 8: "08", 9: "09" };
+const ROLL_CANONICAL_SQL = `regexp_replace(regexp_replace(COALESCE(roll, ''), '[^0-9]', '', 'g'), '^0+', '')`;
 
 if (!process.env.DATABASE_URL) {
   throw new Error("Missing required environment variable: DATABASE_URL");
@@ -30,7 +33,7 @@ const pool = new Pool({
 });
 
 /* Campus NAT: many students share one IP. Do not use a tight per-IP cap.
-   Double-submit is blocked by UNIQUE(roll) on attempts. */
+   Double-submit is blocked by unique roll (084076 and 84076 count as the same). */
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: Number(process.env.RATE_LIMIT_MAX || 100_000),
@@ -178,6 +181,45 @@ function csvRowsToQuestionItems(text) {
   }));
 }
 
+function normalizeRoll(raw) {
+  const digits = String(raw || "").trim().replace(/\D/g, "");
+  if (!digits) {
+    return { error: "Enter a valid roll number." };
+  }
+
+  const stripped = digits.replace(/^0+/, "");
+  if (!stripped) {
+    return { error: "Enter a valid roll number." };
+  }
+
+  let prefix = null;
+  let body = null;
+
+  for (const p of ROLL_TWO_DIGIT_PREFIXES) {
+    if (stripped.startsWith(p)) {
+      prefix = p;
+      body = stripped.slice(p.length);
+      break;
+    }
+  }
+
+  if (!prefix) {
+    const mapped = ROLL_ONE_DIGIT_PREFIXES[stripped[0]];
+    if (mapped) {
+      prefix = mapped;
+      body = stripped.slice(1);
+    }
+  }
+
+  if (!prefix || !body) {
+    return {
+      error: "Roll number must start with 06, 07, 08, 09, 19, 20, 34, or 35.",
+    };
+  }
+
+  return { roll: prefix + body, digits: stripped };
+}
+
 function parseAdminQuestionBody(body) {
   if (Array.isArray(body)) return body;
   if (body && Array.isArray(body.questions)) return body.questions;
@@ -234,14 +276,41 @@ async function refreshQuestionCache() {
   console.log(`Question cache loaded: ${questionCache.length} active questions.`);
 }
 
-async function checkCooldown(roll) {
+async function findAttemptsByRoll(normalized) {
   const { rows } = await pool.query(
-    "SELECT submitted_at FROM attempts WHERE roll = $1 LIMIT 1",
-    [roll]
+    `SELECT id, roll, submitted_at
+     FROM attempts
+     WHERE ${ROLL_CANONICAL_SQL} = $1
+     ORDER BY submitted_at DESC`,
+    [normalized.digits]
   );
-  if (rows.length === 0) return true;
-  const submittedAt = new Date(rows[0].submitted_at).getTime();
-  return Date.now() - submittedAt >= COOLDOWN_MS;
+  return rows;
+}
+
+function cooldownRemainingMs(submittedAt) {
+  const elapsed = Date.now() - new Date(submittedAt).getTime();
+  return Math.max(0, COOLDOWN_MS - elapsed);
+}
+
+async function checkCooldown(normalized) {
+  const rows = await findAttemptsByRoll(normalized);
+  if (rows.length === 0) return { allowed: true, rows };
+  const remaining = cooldownRemainingMs(rows[0].submitted_at);
+  return { allowed: remaining <= 0, remaining, rows };
+}
+
+async function ensureCanonicalRollIndex() {
+  try {
+    await pool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS attempts_roll_canonical_uidx
+       ON attempts ((${ROLL_CANONICAL_SQL}))`
+    );
+  } catch (err) {
+    console.error(
+      "Could not create canonical roll unique index (duplicate equivalent rolls may exist):",
+      err.message
+    );
+  }
 }
 
 app.get("/health", async (_req, res) => {
@@ -259,18 +328,18 @@ app.get("/health", async (_req, res) => {
 
 app.get("/check-roll/:roll", async (req, res) => {
   try {
-    const roll = String(req.params.roll || "").trim();
-    if (!roll) {
-      return res.status(400).json({ allowed: false, message: "Roll is required." });
+    const parsed = normalizeRoll(req.params.roll);
+    if (parsed.error) {
+      return res.status(400).json({ allowed: false, message: parsed.error });
     }
-    const allowed = await checkCooldown(roll);
+    const { allowed } = await checkCooldown(parsed);
     if (!allowed) {
       return res.json({
         allowed: false,
-        message: "Cooldown active. Try again later.",
+        message: "This roll number has already attempted the quiz. You can try again after 24 hours.",
       });
     }
-    res.json({ allowed: true });
+    res.json({ allowed: true, roll: parsed.roll });
   } catch (err) {
     console.error(err);
     res.status(500).json({ allowed: false, error: "Check failed" });
@@ -315,13 +384,19 @@ app.post(
     }
 
     const { name, roll, answers, timeTaken } = req.body;
-    const safeRoll = String(roll).trim();
+    const parsed = normalizeRoll(roll);
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    const safeRoll = parsed.roll;
     const safeName = String(name || "").trim();
     const safeTime = String(timeTaken || "").trim();
 
-    const allowed = await checkCooldown(safeRoll);
-    if (!allowed) {
-      return res.status(403).json({ error: "Cooldown active. Submission rejected." });
+    const cooldown = await checkCooldown(parsed);
+    if (!cooldown.allowed) {
+      return res.status(403).json({
+        error: "This roll number has already attempted the quiz. You can try again after 24 hours.",
+      });
     }
 
     let score = 0;
@@ -352,23 +427,28 @@ app.post(
     };
 
     try {
-      const existing = await pool.query(
-        "SELECT submitted_at FROM attempts WHERE roll = $1 LIMIT 1",
-        [safeRoll]
-      );
+      const existing = cooldown.rows;
 
-      if (existing.rows.length > 0) {
-        const submittedAt = new Date(existing.rows[0].submitted_at).getTime();
+      if (existing.length > 0) {
+        const submittedAt = new Date(existing[0].submitted_at).getTime();
         if (Date.now() - submittedAt < COOLDOWN_MS) {
-          return res.status(403).json({ error: "Cooldown active. Submission rejected." });
+          return res.status(403).json({
+            error: "This roll number has already attempted the quiz. You can try again after 24 hours.",
+          });
         }
 
+        const keepId = existing[0].id;
         await pool.query(
           `UPDATE attempts
-           SET name = $2, score = $3, total = $4, time_taken = $5, answers = $6::jsonb, submitted_at = NOW()
-           WHERE roll = $1`,
-          [safeRoll, safeName, score, total, safeTime, JSON.stringify(payload)]
+           SET roll = $2, name = $3, score = $4, total = $5, time_taken = $6, answers = $7::jsonb, submitted_at = NOW()
+           WHERE id = $1`,
+          [keepId, safeRoll, safeName, score, total, safeTime, JSON.stringify(payload)]
         );
+
+        const extraIds = existing.slice(1).map((row) => row.id);
+        if (extraIds.length > 0) {
+          await pool.query("DELETE FROM attempts WHERE id = ANY($1::int[])", [extraIds]);
+        }
       } else {
         await pool.query(
           `INSERT INTO attempts (roll, name, score, total, time_taken, answers)
@@ -380,7 +460,9 @@ app.post(
       res.json({ success: true });
     } catch (err) {
       if (err && err.code === "23505") {
-        return res.status(403).json({ error: "Already submitted or cooldown active." });
+        return res.status(403).json({
+          error: "This roll number has already attempted the quiz. You can try again after 24 hours.",
+        });
       }
       console.error(err);
       res.status(500).json({ error: "Save failed" });
@@ -474,6 +556,7 @@ app.get("/admin/results.csv", requireAdmin, async (_req, res) => {
 
 async function boot() {
   await applySchema();
+  await ensureCanonicalRollIndex();
   await seedQuestionsIfEmpty();
   await refreshQuestionCache();
   cacheTimer = setInterval(() => {
