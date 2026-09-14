@@ -20,7 +20,19 @@ CREATE TABLE IF NOT EXISTS attempts (
   total INT,
   time_taken TEXT,
   submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  answers JSONB
+  answers JSONB,
+  status TEXT NOT NULL DEFAULT 'submitted',
+  started_at TIMESTAMPTZ,
+  deadline_at TIMESTAMPTZ,
+  question_ids JSONB,
+  progress JSONB
 );
 
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'submitted';
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ;
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS question_ids JSONB;
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS progress JSONB;
+
 CREATE INDEX IF NOT EXISTS attempts_submitted_at_idx ON attempts (submitted_at);
+CREATE INDEX IF NOT EXISTS attempts_status_idx ON attempts (status);
