@@ -10,3 +10,5 @@ questions-real.json
 questions-real.csv
 .DS_Store
 Thumbs.db
+Download Results.bat
+Download-Results.ps1
