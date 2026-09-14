@@ -1,6 +1,12 @@
 .env
 node_modules/
 *.log
-Results/*.csv
+*.csv
+*.pdf
+Results/
 MCQ.pdf
 questions-mcq.json
+questions-real.json
+questions-real.csv
+.DS_Store
+Thumbs.db
