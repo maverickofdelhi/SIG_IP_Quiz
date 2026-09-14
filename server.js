@@ -12,6 +12,10 @@ app.set("trust proxy", 1);
 const PORT = process.env.PORT || 5000;
 const COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const CACHE_REFRESH_MS = 5 * 60 * 1000;
+const QUESTION_SECONDS = 120;
+const QUIZ_SIZE = 10;
+const ALREADY_ATTEMPTED =
+  "This roll number has already attempted the quiz. You can try again after 24 hours.";
 const ROLL_TWO_DIGIT_PREFIXES = ["20", "19", "34", "35"];
 const ROLL_ONE_DIGIT_PREFIXES = { 6: "06", 7: "07", 8: "08", 9: "09" };
 const ROLL_CANONICAL_SQL = `regexp_replace(regexp_replace(COALESCE(roll, ''), '[^0-9]', '', 'g'), '^0+', '')`;
@@ -278,7 +282,8 @@ async function refreshQuestionCache() {
 
 async function findAttemptsByRoll(normalized) {
   const { rows } = await pool.query(
-    `SELECT id, roll, submitted_at
+    `SELECT id, roll, name, score, total, time_taken, submitted_at, answers,
+            status, started_at, deadline_at, question_ids, progress
      FROM attempts
      WHERE ${ROLL_CANONICAL_SQL} = $1
      ORDER BY submitted_at DESC`,
@@ -287,16 +292,199 @@ async function findAttemptsByRoll(normalized) {
   return rows;
 }
 
-function cooldownRemainingMs(submittedAt) {
-  const elapsed = Date.now() - new Date(submittedAt).getTime();
-  return Math.max(0, COOLDOWN_MS - elapsed);
+function parseQuestionIds(raw) {
+  if (Array.isArray(raw)) return raw.map((id) => Number(id)).filter((id) => Number.isFinite(id));
+  if (typeof raw === "string") {
+    try {
+      return parseQuestionIds(JSON.parse(raw));
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
-async function checkCooldown(normalized) {
-  const rows = await findAttemptsByRoll(normalized);
-  if (rows.length === 0) return { allowed: true, rows };
-  const remaining = cooldownRemainingMs(rows[0].submitted_at);
-  return { allowed: remaining <= 0, remaining, rows };
+function parseProgress(raw) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return { ...raw };
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+      return { currentIdx: 0, answers: [] };
+    }
+  }
+  return { currentIdx: 0, answers: [] };
+}
+
+function pickQuestionIds() {
+  const shuffled = [...questionCache];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled.slice(0, Math.min(QUIZ_SIZE, shuffled.length)).map((q) => q.id);
+}
+
+function clientQuestionsForIds(ids) {
+  const byId = new Map(questionCache.map((q) => [q.id, q]));
+  return ids
+    .map((id) => {
+      const q = byId.get(id);
+      if (!q) return null;
+      return { id: q.id, question: q.question, options: q.options };
+    })
+    .filter(Boolean);
+}
+
+function mergeLockedAnswers(existingAnswers, incoming, questionIds) {
+  const merged = questionIds.map((_id, idx) => {
+    const prev = Array.isArray(existingAnswers) ? existingAnswers[idx] : null;
+    if (prev && prev.id != null) return { id: Number(prev.id), selected: Number(prev.selected) };
+    return null;
+  });
+
+  const incomingList = Array.isArray(incoming) ? incoming : [];
+  incomingList.forEach((ans) => {
+    if (!ans || ans.id == null) return;
+    const slot = questionIds.findIndex((id) => Number(id) === Number(ans.id));
+    if (slot < 0 || merged[slot]) return;
+    merged[slot] = { id: Number(questionIds[slot]), selected: Number(ans.selected) };
+  });
+  return merged;
+}
+
+function applyAwayTime(progress, questionIds, deadlineAt) {
+  const now = Date.now();
+  const deadline = deadlineAt ? new Date(deadlineAt).getTime() : now;
+  const quizSecondsLeft = Math.max(0, Math.floor((deadline - now) / 1000));
+  let currentIdx = Math.max(0, Number(progress.currentIdx) || 0);
+  const answers = Array.isArray(progress.answers) ? progress.answers.slice() : [];
+  let questionStartedAt = progress.questionStartedAt
+    ? new Date(progress.questionStartedAt).getTime()
+    : now;
+
+  if (!Number.isFinite(questionStartedAt)) questionStartedAt = now;
+
+  while (currentIdx < questionIds.length && now - questionStartedAt >= QUESTION_SECONDS * 1000) {
+    if (!answers[currentIdx] || answers[currentIdx].id == null) {
+      answers[currentIdx] = { id: questionIds[currentIdx], selected: -1 };
+    }
+    currentIdx += 1;
+    questionStartedAt += QUESTION_SECONDS * 1000;
+  }
+
+  if (currentIdx > questionIds.length) currentIdx = questionIds.length;
+  if (questionStartedAt > now) questionStartedAt = now;
+
+  const elapsedOnQuestion = Math.max(0, Math.floor((now - questionStartedAt) / 1000));
+  let questionSecondsLeft = Math.max(0, QUESTION_SECONDS - elapsedOnQuestion);
+  questionSecondsLeft = Math.min(questionSecondsLeft, quizSecondsLeft);
+
+  return {
+    progress: {
+      ...progress,
+      currentIdx,
+      answers,
+      questionStartedAt: new Date(questionStartedAt).toISOString(),
+    },
+    quizSecondsLeft,
+    questionSecondsLeft,
+    timedOut: now >= deadline || currentIdx >= questionIds.length,
+  };
+}
+
+function gradeAssignedQuiz(questionIds, answers) {
+  const byId = new Map(questionCache.map((q) => [q.id, q]));
+  const answerById = new Map();
+  (answers || []).forEach((a) => {
+    if (a && a.id != null) answerById.set(Number(a.id), a);
+  });
+
+  let score = 0;
+  const detailsLog = [];
+  const submitted = questionIds.map((id) => {
+    const ans = answerById.get(Number(id));
+    return { id, selected: ans == null ? -1 : Number(ans.selected) };
+  });
+
+  submitted.forEach((ans) => {
+    const originalQ = byId.get(ans.id);
+    if (!originalQ) return;
+    const selected = Number(ans.selected);
+    const isCorrect = selected === originalQ.correctAnswerIdx;
+    if (isCorrect) score++;
+    detailsLog.push({
+      q: originalQ.question,
+      chosen: originalQ.options[selected] || "Skipped",
+      correct: originalQ.options[originalQ.correctAnswerIdx],
+      status: isCorrect ? "CORRECT" : "WRONG",
+    });
+  });
+
+  return { score, total: questionIds.length, submitted, detailsLog };
+}
+
+async function finalizeAttempt(row, answers, name) {
+  const ids = parseQuestionIds(row.question_ids);
+  const progress = parseProgress(row.progress);
+  const progressAnswers = answers || progress.answers || [];
+  const { score, total, submitted, detailsLog } = gradeAssignedQuiz(ids, progressAnswers);
+  const started = row.started_at ? new Date(row.started_at).getTime() : Date.now();
+  const elapsedSec = Math.max(0, Math.floor((Date.now() - started) / 1000));
+  const safeName = String(name || progress.name || row.name || "").trim();
+
+  await pool.query(
+    `UPDATE attempts
+     SET status = 'submitted',
+         name = $2,
+         score = $3,
+         total = $4,
+         time_taken = $5,
+         answers = $6::jsonb,
+         submitted_at = NOW(),
+         progress = $7::jsonb
+     WHERE id = $1`,
+    [
+      row.id,
+      safeName,
+      score,
+      total,
+      `${elapsedSec}s`,
+      JSON.stringify({ submitted, details: detailsLog }),
+      JSON.stringify({ currentIdx: ids.length, answers: submitted, name: safeName }),
+    ]
+  );
+}
+
+function isSubmittedCooldownActive(row) {
+  if (!row || row.status === "in_progress") return false;
+  const submittedAt = row.submitted_at ? new Date(row.submitted_at).getTime() : 0;
+  return Date.now() - submittedAt < COOLDOWN_MS;
+}
+
+function quizPayload(row, extra) {
+  const ids = parseQuestionIds(row.question_ids);
+  const questions = clientQuestionsForIds(ids);
+  const progress = parseProgress(row.progress);
+  return {
+    allowed: true,
+    roll: row.roll,
+    questions,
+    currentIdx: extra.currentIdx,
+    answers: extra.answers,
+    questionSecondsLeft: extra.questionSecondsLeft,
+    quizSecondsLeft: extra.quizSecondsLeft,
+    startedAt: row.started_at ? new Date(row.started_at).toISOString() : new Date().toISOString(),
+    resumed: extra.resumed,
+  };
+}
+
+async function persistProgress(rowId, progress) {
+  await pool.query("UPDATE attempts SET progress = $2::jsonb WHERE id = $1", [
+    rowId,
+    JSON.stringify(progress),
+  ]);
 }
 
 async function ensureCanonicalRollIndex() {
@@ -332,12 +520,26 @@ app.get("/check-roll/:roll", async (req, res) => {
     if (parsed.error) {
       return res.status(400).json({ allowed: false, message: parsed.error });
     }
-    const { allowed } = await checkCooldown(parsed);
-    if (!allowed) {
-      return res.json({
-        allowed: false,
-        message: "This roll number has already attempted the quiz. You can try again after 24 hours.",
-      });
+    const rows = await findAttemptsByRoll(parsed);
+    const row = rows[0];
+    if (!row) {
+      return res.json({ allowed: true, roll: parsed.roll });
+    }
+    if (row.status === "in_progress") {
+      const ids = parseQuestionIds(row.question_ids);
+      const applied = applyAwayTime(parseProgress(row.progress), ids, row.deadline_at);
+      if (applied.timedOut) {
+        await finalizeAttempt(
+          { ...row, progress: applied.progress },
+          applied.progress.answers,
+          applied.progress.name
+        );
+        return res.json({ allowed: false, message: ALREADY_ATTEMPTED });
+      }
+      return res.json({ allowed: true, roll: parsed.roll, resumable: true });
+    }
+    if (isSubmittedCooldownActive(row)) {
+      return res.json({ allowed: false, message: ALREADY_ATTEMPTED });
     }
     res.json({ allowed: true, roll: parsed.roll });
   } catch (err) {
@@ -347,27 +549,169 @@ app.get("/check-roll/:roll", async (req, res) => {
 });
 
 app.get("/generate-quiz", (_req, res) => {
-  try {
+  res.status(410).json({ error: "Use POST /start-quiz with name and roll." });
+});
+
+app.post(
+  "/start-quiz",
+  [body("name").trim(), body("roll").trim().notEmpty()],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: "Name and roll are required." });
+    }
+
+    const parsed = normalizeRoll(req.body.roll);
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
     if (questionCache.length === 0) {
       return res.status(503).json({ error: "No questions available" });
     }
-    const shuffled = [...questionCache];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+
+    const safeName = String(req.body.name || "").trim();
+    const safeRoll = parsed.roll;
+
+    try {
+      const rows = await findAttemptsByRoll(parsed);
+      const extras = rows.slice(1).map((r) => r.id);
+      if (extras.length > 0) {
+        await pool.query("DELETE FROM attempts WHERE id = ANY($1::int[])", [extras]);
+      }
+      const row = rows[0];
+
+      if (row && row.status === "in_progress") {
+        const ids = parseQuestionIds(row.question_ids);
+        const applied = applyAwayTime(parseProgress(row.progress), ids, row.deadline_at);
+        applied.progress.name = safeName || applied.progress.name || row.name;
+        await persistProgress(row.id, applied.progress);
+
+        if (applied.timedOut) {
+          await finalizeAttempt(
+            { ...row, progress: applied.progress },
+            applied.progress.answers,
+            applied.progress.name
+          );
+          return res.status(403).json({ error: ALREADY_ATTEMPTED });
+        }
+
+        return res.json(
+          quizPayload(
+            { ...row, progress: applied.progress, roll: safeRoll },
+            {
+              currentIdx: applied.progress.currentIdx,
+              answers: applied.progress.answers,
+              questionSecondsLeft: applied.questionSecondsLeft,
+              quizSecondsLeft: applied.quizSecondsLeft,
+              resumed: true,
+            }
+          )
+        );
+      }
+
+      if (row && isSubmittedCooldownActive(row)) {
+        return res.status(403).json({ error: ALREADY_ATTEMPTED });
+      }
+
+      const ids = pickQuestionIds();
+      if (ids.length === 0) {
+        return res.status(503).json({ error: "No questions available" });
+      }
+      const now = new Date();
+      const deadline = new Date(now.getTime() + ids.length * QUESTION_SECONDS * 1000);
+      const progress = {
+        currentIdx: 0,
+        answers: new Array(ids.length).fill(null),
+        name: safeName,
+        questionStartedAt: now.toISOString(),
+      };
+
+      let saved;
+      if (row) {
+        const updated = await pool.query(
+          `UPDATE attempts
+           SET roll = $2, name = $3, score = NULL, total = NULL, time_taken = NULL, answers = NULL,
+               status = 'in_progress', started_at = $4, deadline_at = $5,
+               question_ids = $6::jsonb, progress = $7::jsonb, submitted_at = $4
+           WHERE id = $1
+           RETURNING id, roll, name, status, started_at, deadline_at, question_ids, progress`,
+          [row.id, safeRoll, safeName, now, deadline, JSON.stringify(ids), JSON.stringify(progress)]
+        );
+        saved = updated.rows[0];
+      } else {
+        const inserted = await pool.query(
+          `INSERT INTO attempts (roll, name, status, started_at, deadline_at, question_ids, progress, submitted_at)
+           VALUES ($1, $2, 'in_progress', $3, $4, $5::jsonb, $6::jsonb, $3)
+           RETURNING id, roll, name, status, started_at, deadline_at, question_ids, progress`,
+          [safeRoll, safeName, now, deadline, JSON.stringify(ids), JSON.stringify(progress)]
+        );
+        saved = inserted.rows[0];
+      }
+
+      return res.json(
+        quizPayload(saved, {
+          currentIdx: 0,
+          answers: progress.answers,
+          questionSecondsLeft: QUESTION_SECONDS,
+          quizSecondsLeft: ids.length * QUESTION_SECONDS,
+          resumed: false,
+        })
+      );
+    } catch (err) {
+      if (err && err.code === "23505") {
+        return res.status(403).json({ error: ALREADY_ATTEMPTED });
+      }
+      console.error(err);
+      res.status(500).json({ error: "Failed to start quiz" });
     }
-    const picked = shuffled.slice(0, Math.min(10, shuffled.length));
-    const clientQuiz = picked.map((q) => ({
-      id: q.id,
-      question: q.question,
-      options: q.options,
-    }));
-    res.json(clientQuiz);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to generate quiz" });
   }
-});
+);
+
+app.post(
+  "/save-progress",
+  [body("roll").trim().notEmpty()],
+  async (req, res) => {
+    const parsed = normalizeRoll(req.body.roll);
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+
+    try {
+      const rows = await findAttemptsByRoll(parsed);
+      const row = rows[0];
+      if (!row || row.status !== "in_progress") {
+        return res.status(403).json({ error: ALREADY_ATTEMPTED });
+      }
+
+      const ids = parseQuestionIds(row.question_ids);
+      const existing = parseProgress(row.progress);
+      existing.answers = mergeLockedAnswers(existing.answers, req.body.answers, ids);
+      const incomingIdx = Number(req.body.currentIdx);
+      if (Number.isFinite(incomingIdx) && incomingIdx > (existing.currentIdx || 0)) {
+        existing.currentIdx = Math.min(ids.length, incomingIdx);
+        existing.questionStartedAt = new Date().toISOString();
+      }
+      if (req.body.name) existing.name = String(req.body.name).trim();
+
+      const applied = applyAwayTime(existing, ids, row.deadline_at);
+      await persistProgress(row.id, applied.progress);
+
+      if (applied.timedOut) {
+        await finalizeAttempt(
+          { ...row, progress: applied.progress },
+          applied.progress.answers,
+          applied.progress.name
+        );
+        return res.json({ success: true, finalized: true });
+      }
+
+      res.json({ success: true, currentIdx: applied.progress.currentIdx });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Save failed" });
+    }
+  }
+);
 
 app.post(
   "/submit-quiz",
@@ -383,86 +727,42 @@ app.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { name, roll, answers, timeTaken } = req.body;
-    const parsed = normalizeRoll(roll);
+    const parsed = normalizeRoll(req.body.roll);
     if (parsed.error) {
       return res.status(400).json({ error: parsed.error });
     }
-    const safeRoll = parsed.roll;
-    const safeName = String(name || "").trim();
-    const safeTime = String(timeTaken || "").trim();
-
-    const cooldown = await checkCooldown(parsed);
-    if (!cooldown.allowed) {
-      return res.status(403).json({
-        error: "This roll number has already attempted the quiz. You can try again after 24 hours.",
-      });
-    }
-
-    let score = 0;
-    const detailsLog = [];
-    const byId = new Map(questionCache.map((q) => [q.id, q]));
-
-    answers.forEach((ans) => {
-      if (!ans || ans.id == null) return;
-      const originalQ = byId.get(ans.id);
-      if (!originalQ) return;
-
-      const selected = Number(ans.selected);
-      const isCorrect = selected === originalQ.correctAnswerIdx;
-      if (isCorrect) score++;
-
-      detailsLog.push({
-        q: originalQ.question,
-        chosen: originalQ.options[selected] || "Skipped",
-        correct: originalQ.options[originalQ.correctAnswerIdx],
-        status: isCorrect ? "CORRECT" : "WRONG",
-      });
-    });
-
-    const total = answers.length;
-    const payload = {
-      submitted: answers,
-      details: detailsLog,
-    };
+    const safeName = String(req.body.name || "").trim();
 
     try {
-      const existing = cooldown.rows;
-
-      if (existing.length > 0) {
-        const submittedAt = new Date(existing[0].submitted_at).getTime();
-        if (Date.now() - submittedAt < COOLDOWN_MS) {
-          return res.status(403).json({
-            error: "This roll number has already attempted the quiz. You can try again after 24 hours.",
-          });
-        }
-
-        const keepId = existing[0].id;
-        await pool.query(
-          `UPDATE attempts
-           SET roll = $2, name = $3, score = $4, total = $5, time_taken = $6, answers = $7::jsonb, submitted_at = NOW()
-           WHERE id = $1`,
-          [keepId, safeRoll, safeName, score, total, safeTime, JSON.stringify(payload)]
-        );
-
-        const extraIds = existing.slice(1).map((row) => row.id);
-        if (extraIds.length > 0) {
-          await pool.query("DELETE FROM attempts WHERE id = ANY($1::int[])", [extraIds]);
-        }
-      } else {
-        await pool.query(
-          `INSERT INTO attempts (roll, name, score, total, time_taken, answers)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-          [safeRoll, safeName, score, total, safeTime, JSON.stringify(payload)]
-        );
+      const rows = await findAttemptsByRoll(parsed);
+      const extras = rows.slice(1).map((r) => r.id);
+      if (extras.length > 0) {
+        await pool.query("DELETE FROM attempts WHERE id = ANY($1::int[])", [extras]);
+      }
+      const row = rows[0];
+      if (!row) {
+        return res.status(403).json({ error: "No quiz session. Start the quiz first." });
       }
 
+      if (row.status === "submitted") {
+        if (isSubmittedCooldownActive(row)) {
+          return res.json({ success: true, alreadySubmitted: true });
+        }
+        return res.status(403).json({ error: "No quiz session. Start the quiz first." });
+      }
+
+      const ids = parseQuestionIds(row.question_ids);
+      const existing = parseProgress(row.progress);
+      const mergedAnswers = mergeLockedAnswers(existing.answers, req.body.answers, ids);
+      await finalizeAttempt(
+        { ...row, progress: { ...existing, answers: mergedAnswers, name: safeName } },
+        mergedAnswers,
+        safeName
+      );
       res.json({ success: true });
     } catch (err) {
       if (err && err.code === "23505") {
-        return res.status(403).json({
-          error: "This roll number has already attempted the quiz. You can try again after 24 hours.",
-        });
+        return res.status(403).json({ error: ALREADY_ATTEMPTED });
       }
       console.error(err);
       res.status(500).json({ error: "Save failed" });
@@ -526,6 +826,7 @@ app.get("/admin/results.csv", requireAdmin, async (_req, res) => {
     const { rows } = await pool.query(
       `SELECT roll, name, score, total, time_taken, submitted_at, answers
        FROM attempts
+       WHERE status = 'submitted' OR status IS NULL
        ORDER BY submitted_at ASC`
     );
 

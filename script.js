@@ -12,6 +12,8 @@ let quizData = [];
 let userAnswers = [];
 let currentIdx = 0;
 let quizStartTime = null;
+let quizDeadline = null;
+let pendingQuestionSeconds = null;
 let startInFlight = false;
 let submitInFlight = false;
 let answerLocked = false;
@@ -107,29 +109,28 @@ async function startQuizProcess() {
 
   document.getElementById("registration-screen").classList.add("hidden");
   document.getElementById("setup-screen").classList.remove("hidden");
-  document.getElementById("setup-text").innerText = "Checking eligibility...";
+  document.getElementById("setup-text").innerText = "Starting quiz...";
+  const retryBtn = document.getElementById("retry-submit-btn");
+  if (retryBtn) retryBtn.classList.add("hidden");
 
   try {
-    const checkRes = await fetchWithTimeout(`${BASE_URL}/check-roll/${encodeURIComponent(studentRoll)}`);
-    let checkData = {};
+    const response = await fetchWithTimeout(`${BASE_URL}/start-quiz`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: studentName, roll: studentRoll }),
+    });
+    let payload = {};
     try {
-      checkData = await checkRes.json();
+      payload = await response.json();
     } catch {
-      throw new Error("Could not verify roll number. Please try again.");
+      throw new Error("Could not start the quiz. Please try again.");
     }
 
-    if (!checkRes.ok) {
-      throw new Error(checkData.error || checkData.message || "Could not verify roll number.");
+    if (!response.ok || payload.error) {
+      throw new Error(payload.error || payload.message || "You cannot start the quiz right now.");
     }
 
-    if (!checkData.allowed) {
-      alert(checkData.message || "You cannot start the quiz right now.");
-      location.reload();
-      return;
-    }
-
-    document.getElementById("setup-text").innerText = "Loading quiz...";
-    await generateQuiz();
+    openQuizFromServer(payload);
   } catch (err) {
     console.error(err);
     alert(err.message || "Connection failed. Please check your internet.");
@@ -137,45 +138,59 @@ async function startQuizProcess() {
   }
 }
 
-/* ===================== STEP 2: FETCH QUIZ ===================== */
-async function generateQuiz() {
-  try {
-    const response = await fetchWithTimeout(`${BASE_URL}/generate-quiz`);
-    let payload = null;
-    try {
-      payload = await response.json();
-    } catch {
-      throw new Error("Failed to load questions. Please refresh.");
-    }
+function remainingQuizSeconds() {
+  if (!quizDeadline) return QUESTION_SECONDS;
+  return Math.max(0, Math.ceil((quizDeadline - Date.now()) / 1000));
+}
 
-    if (!response.ok || (payload && payload.error)) {
-      throw new Error(payload && payload.error ? payload.error : "No data");
-    }
+function openQuizFromServer(payload) {
+  const questions = Array.isArray(payload.questions) ? payload.questions : [];
+  quizData = questions.filter(
+    (q) => q && q.id != null && q.question && Array.isArray(q.options) && q.options.length > 0
+  );
 
-    if (!Array.isArray(payload)) {
-      throw new Error("No data");
-    }
-
-    quizData = payload.filter(
-      (q) => q && q.id != null && q.question && Array.isArray(q.options) && q.options.length > 0
-    );
-
-    if (quizData.length === 0) {
-      throw new Error("No data");
-    }
-
-    currentIdx = 0;
-    answerLocked = false;
-    submitInFlight = false;
-    userAnswers = new Array(quizData.length).fill(null);
-
-    quizStartTime = Date.now();
-    document.getElementById("setup-screen").classList.add("hidden");
-    document.getElementById("quiz-screen").classList.remove("hidden");
-    loadQuestion();
-  } catch (err) {
-    throw new Error(err.message || "Failed to load questions. Please refresh.");
+  if (quizData.length === 0) {
+    throw new Error("No data");
   }
+
+  currentIdx = Math.max(0, Number(payload.currentIdx) || 0);
+  answerLocked = false;
+  submitInFlight = false;
+  userAnswers = new Array(quizData.length).fill(null);
+
+  const saved = Array.isArray(payload.answers) ? payload.answers : [];
+  saved.forEach((ans, idx) => {
+    if (!ans || ans.id == null) return;
+    const slot = quizData.findIndex((q) => Number(q.id) === Number(ans.id));
+    const dest = slot >= 0 ? slot : idx;
+    if (dest >= 0 && dest < userAnswers.length) {
+      userAnswers[dest] = { id: quizData[dest].id, selected: Number(ans.selected) };
+    }
+  });
+
+  quizStartTime = payload.startedAt ? new Date(payload.startedAt).getTime() : Date.now();
+  const quizLeft = Number(payload.quizSecondsLeft);
+  quizDeadline = Date.now() + (Number.isFinite(quizLeft) ? quizLeft : quizData.length * QUESTION_SECONDS) * 1000;
+  pendingQuestionSeconds = Number.isFinite(Number(payload.questionSecondsLeft))
+    ? Number(payload.questionSecondsLeft)
+    : QUESTION_SECONDS;
+
+  document.getElementById("setup-screen").classList.add("hidden");
+  document.getElementById("quiz-screen").classList.remove("hidden");
+  loadQuestion();
+}
+
+function saveProgress() {
+  fetchWithTimeout(`${BASE_URL}/save-progress`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: studentName,
+      roll: studentRoll,
+      currentIdx,
+      answers: userAnswers.filter((a) => a && a.id != null),
+    }),
+  }).catch(() => {});
 }
 
 /* ===================== STEP 3: LOAD QUESTION ===================== */
@@ -186,7 +201,7 @@ function formatTime(seconds) {
 }
 
 function loadQuestion() {
-  if (currentIdx >= quizData.length) {
+  if (currentIdx >= quizData.length || remainingQuizSeconds() <= 0) {
     submitQuiz();
     return;
   }
@@ -210,11 +225,25 @@ function loadQuestion() {
   nextBtn.innerText = currentIdx === quizData.length - 1 ? "Submit Quiz" : "Next Question";
 
   clearInterval(timer);
-  timeLeft = QUESTION_SECONDS;
+  const quizLeft = remainingQuizSeconds();
+  if (pendingQuestionSeconds != null) {
+    timeLeft = Math.min(Math.max(0, pendingQuestionSeconds), quizLeft);
+    pendingQuestionSeconds = null;
+  } else {
+    timeLeft = Math.min(QUESTION_SECONDS, quizLeft);
+  }
+
+  if (timeLeft <= 0) {
+    recordAnswer(-1);
+    return;
+  }
+
   timerEl.innerText = `Time left: ${formatTime(timeLeft)}`;
 
   timer = setInterval(() => {
     timeLeft--;
+    const cap = remainingQuizSeconds();
+    if (cap < timeLeft) timeLeft = cap;
     timerEl.innerText = `Time left: ${formatTime(timeLeft)}`;
 
     if (timeLeft <= 0) {
@@ -273,6 +302,7 @@ function recordAnswer(choiceIdx) {
   }
 
   currentIdx++;
+  saveProgress();
   loadQuestion();
 }
 
@@ -286,9 +316,13 @@ async function submitQuiz() {
   document.getElementById("quiz-screen").classList.add("hidden");
   document.getElementById("setup-screen").classList.remove("hidden");
   document.getElementById("setup-text").innerText = "Submitting responses...";
-  document.querySelector(".loader").style.display = "block";
+  const loader = document.querySelector(".loader");
+  if (loader) loader.style.display = "block";
+  const retryBtn = document.getElementById("retry-submit-btn");
+  if (retryBtn) retryBtn.classList.add("hidden");
 
-  const timeTaken = `${Math.floor((Date.now() - quizStartTime) / 1000)}s`;
+  const started = quizStartTime || Date.now();
+  const timeTaken = `${Math.floor((Date.now() - started) / 1000)}s`;
 
   const payload = {
     name: studentName,
@@ -308,20 +342,28 @@ async function submitQuiz() {
     try {
       result = await response.json();
     } catch {
-      throw new Error("Submission failed. Please contact admin.");
+      throw new Error("Submission failed. Check your internet and tap Retry submit.");
     }
 
-    if (!response.ok || result.error) {
-      alert("Error: " + (result.error || "Submission rejected."));
+    if (response.ok && (result.success || result.alreadySubmitted)) {
+      document.getElementById("setup-screen").classList.add("hidden");
+      document.getElementById("result-screen").classList.remove("hidden");
+      return;
+    }
+
+    if (response.status === 403 && result.error) {
+      alert("Error: " + result.error);
       location.reload();
       return;
     }
 
-    document.getElementById("setup-screen").classList.add("hidden");
-    document.getElementById("result-screen").classList.remove("hidden");
+    throw new Error(result.error || "Submission failed. Check your internet and tap Retry submit.");
   } catch (err) {
-    alert(err.message || "Submission failed. Please contact admin.");
     console.error(err);
+    if (loader) loader.style.display = "none";
+    document.getElementById("setup-text").innerText =
+      err.message || "Submission failed. Check your internet and tap Retry submit.";
+    if (retryBtn) retryBtn.classList.remove("hidden");
     submitInFlight = false;
   }
 }
