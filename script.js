@@ -1,5 +1,7 @@
 /* ===================== CONFIG ===================== */
-const BASE_URL = window.location.origin;
+const BASE_URL = window.location.hostname.endsWith(".vercel.app")
+  ? "https://sig-ip-quiz.onrender.com"
+  : window.location.origin;
 const FETCH_TIMEOUT_MS = 45_000;
 const START_RETRIES = 2;
 const WAKE_INTERVAL_MS = 4 * 60 * 1000;
