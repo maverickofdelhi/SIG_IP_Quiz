@@ -1,26 +1,82 @@
 [
   {
-    "question": "Placeholder: What does IP typically stand for in this SIG?",
-    "A": "Internet Protocol",
-    "B": "Intellectual Property",
-    "C": "Internal Process",
-    "D": "Indexed Page",
+    "question": "What is the main purpose of diversification in an investment portfolio?",
+    "A": "To maximize taxes",
+    "B": "To reduce investment risk",
+    "C": "To guarantee profits",
+    "D": "To eliminate market fluctuations",
     "correct": "B"
   },
   {
-    "question": "Placeholder: Which option is a patent?",
-    "A": "A brand name",
-    "B": "A secret recipe kept confidential",
-    "C": "An exclusive right to an invention",
-    "D": "A company logo drawing",
+    "question": "What does asset allocation refer to?",
+    "A": "Choosing only the best-performing stock",
+    "B": "Dividing investments among different asset classes",
+    "C": "Selling all investments at year-end",
+    "D": "Borrowing money to invest",
+    "correct": "B"
+  },
+  {
+    "question": "Which portfolio would generally have the highest level of risk?",
+    "A": "80% government bonds, 20% cash",
+    "B": "60% bonds, 40% large-cap stocks",
+    "C": "90% stocks, 10% bonds",
+    "D": "100% treasury securities",
     "correct": "C"
   },
   {
-    "question": "Placeholder: Copyright protects which of the following?",
-    "A": "Original literary and artistic works",
-    "B": "Functional mechanical inventions only",
-    "C": "Geographic place names",
-    "D": "Telephone numbers",
-    "correct": "A"
+    "question": "What is portfolio rebalancing?",
+    "A": "Closing an investment account",
+    "B": "Adjusting portfolio holdings back toward the desired asset allocation",
+    "C": "Investing only in new companies",
+    "D": "Converting all investments into cash",
+    "correct": "B"
+  },
+  {
+    "question": "If two assets in a portfolio have a correlation of -1, what does this indicate?",
+    "A": "They always move in the same direction",
+    "B": "They have no relationship",
+    "C": "They tend to move in opposite directions",
+    "D": "Both assets have identical returns",
+    "correct": "C"
+  },
+  {
+    "question": "What is the primary benefit of holding a portfolio containing stocks, bonds, and real estate?",
+    "A": "Guaranteed returns",
+    "B": "Greater diversification across asset classes",
+    "C": "Elimination of inflation",
+    "D": "Elimination of all investment risk",
+    "correct": "B"
+  },
+  {
+    "question": "A portfolio has an expected return of 10% and a standard deviation of 15%. What does the standard deviation primarily measure?",
+    "A": "Portfolio income",
+    "B": "Portfolio volatility or risk",
+    "C": "Dividend yield",
+    "D": "Tax liability",
+    "correct": "B"
+  },
+  {
+    "question": "An investor holds 20 different stocks, but 80% of the portfolio is invested in one company. What is the main concern?",
+    "A": "Excessive diversification",
+    "B": "Concentration risk",
+    "C": "Currency risk",
+    "D": "Interest-rate risk",
+    "correct": "B"
+  },
+  {
+    "question": "Which investor is generally most suited to a portfolio with a higher allocation to equities?",
+    "A": "An investor needing the money next month",
+    "B": "An investor with a long investment horizon and higher risk tolerance",
+    "C": "An investor unwilling to accept any volatility",
+    "D": "An investor with no emergency savings",
+    "correct": "B"
+  },
+  {
+    "question": "What is the Sharpe ratio commonly used to evaluate?",
+    "A": "A company's total debt",
+    "B": "Portfolio return relative to the risk taken",
+    "C": "The number of stocks in a portfolio",
+    "D": "The tax rate on investments",
+    "correct": "B"
   }
 ]
