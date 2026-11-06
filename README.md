@@ -1,6 +1,6 @@
-# SIG-IP Quiz
+# SIP-IP Quiz
 
-Timed quiz application for SIG.
+Timed quiz application for SIP-IP.
 
 ## Run locally
 
@@ -13,12 +13,3 @@ Timed quiz application for SIG.
 The server applies `db/schema.sql`, seeds an empty database from `questions.json`,
 and serves the quiz page and its assets. The answer key is not served as a public
 static directory.
-
-## Production checks
-
-- Configure `DATABASE_URL`, `ADMIN_SECRET`, and `PORT` in the hosting provider.
-- Configure the health check path as `/health`.
-- Keep `.env`, `Results/`, and downloaded exports out of version control.
-- Use `X-Admin-Secret` only for the protected admin endpoints.
-
-Made by Maverick

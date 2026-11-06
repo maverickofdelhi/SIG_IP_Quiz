@@ -9,8 +9,10 @@ const { body, validationResult } = require("express-validator");
 const rateLimit = require("express-rate-limit");
 
 const app = express();
+let bootPromise;
 app.set("trust proxy", 1);
 const PORT = process.env.PORT || 5000;
+const IS_VERCEL = Boolean(process.env.VERCEL);
 const COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const CACHE_REFRESH_MS = 5 * 60 * 1000;
 const QUESTION_SECONDS = 30;
@@ -55,6 +57,14 @@ app.use(cors({
 app.use(limiter);
 app.use(express.json({ limit: "2mb" }));
 app.use(express.text({ type: ["text/csv", "text/plain"], limit: "2mb" }));
+app.use(async (_req, _res, next) => {
+  try {
+    await bootPromise;
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "index.html")));
 app.get("/script.js", (_req, res) => res.sendFile(path.join(__dirname, "script.js")));
 app.get("/file1.png", (_req, res) => res.sendFile(path.join(__dirname, "file1.png")));
@@ -953,12 +963,19 @@ async function boot() {
   }, CACHE_REFRESH_MS);
   if (cacheTimer.unref) cacheTimer.unref();
 
-  app.listen(PORT, () => {
-    console.log(`Server running on ${PORT}`);
-  });
+  if (!IS_VERCEL) {
+    app.listen(PORT, () => {
+      console.log(`Server running on ${PORT}`);
+    });
+  }
 }
 
-boot().catch((err) => {
+bootPromise = boot().catch((err) => {
   console.error("Failed to start server:", err);
-  process.exit(1);
+  if (!IS_VERCEL) {
+    process.exitCode = 1;
+  }
+  throw err;
 });
+
+module.exports = app;
