@@ -12,7 +12,7 @@ app.set("trust proxy", 1);
 const PORT = process.env.PORT || 5000;
 const COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const CACHE_REFRESH_MS = 5 * 60 * 1000;
-const QUESTION_SECONDS = 120;
+const QUESTION_SECONDS = 30;
 const QUIZ_SIZE = 10;
 const ALREADY_ATTEMPTED =
   "This roll number has already attempted the quiz. You can try again after 24 hours.";
@@ -659,6 +659,29 @@ app.post(
       );
     } catch (err) {
       if (err && err.code === "23505") {
+        try {
+          const raced = (await findAttemptsByRoll(parsed))[0];
+          if (raced && raced.status === "in_progress") {
+            const ids = parseQuestionIds(raced.question_ids);
+            const applied = applyAwayTime(parseProgress(raced.progress), ids, raced.deadline_at);
+            if (!applied.timedOut) {
+              return res.json(
+                quizPayload(
+                  { ...raced, progress: applied.progress, roll: safeRoll },
+                  {
+                    currentIdx: applied.progress.currentIdx,
+                    answers: applied.progress.answers,
+                    questionSecondsLeft: applied.questionSecondsLeft,
+                    quizSecondsLeft: applied.quizSecondsLeft,
+                    resumed: true,
+                  }
+                )
+              );
+            }
+          }
+        } catch (resumeErr) {
+          console.error(resumeErr);
+        }
         return res.status(403).json({ error: ALREADY_ATTEMPTED });
       }
       console.error(err);

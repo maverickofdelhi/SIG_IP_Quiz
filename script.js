@@ -1,7 +1,9 @@
 /* ===================== CONFIG ===================== */
 const BASE_URL = "https://sig-ip-quiz.onrender.com";
-const FETCH_TIMEOUT_MS = 15_000;
-const QUESTION_SECONDS = 120;
+const FETCH_TIMEOUT_MS = 45_000;
+const START_RETRIES = 2;
+const WAKE_INTERVAL_MS = 4 * 60 * 1000;
+const QUESTION_SECONDS = 30;
 const ROLL_TWO_DIGIT_PREFIXES = ["20", "19", "34", "35"];
 const ROLL_ONE_DIGIT_PREFIXES = { 6: "06", 7: "07", 8: "08", 9: "09" };
 
@@ -24,9 +26,11 @@ let timeLeft = QUESTION_SECONDS;
 
 async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timeoutMs = Number(options.timeoutMs) || FETCH_TIMEOUT_MS;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const { timeoutMs: _ignored, ...fetchOptions } = options;
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await fetch(url, { ...fetchOptions, signal: controller.signal });
   } catch (err) {
     if (err && err.name === "AbortError") {
       throw new Error("Request timed out. Please check your connection and try again.");
@@ -36,6 +40,38 @@ async function fetchWithTimeout(url, options = {}) {
     clearTimeout(timeoutId);
   }
 }
+
+function isRetryableStartError(err) {
+  const msg = String((err && err.message) || "");
+  return /timed out|network|failed to fetch|connection failed/i.test(msg);
+}
+
+async function fetchWithRetry(url, options, retries) {
+  let lastErr;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fetchWithTimeout(url, options);
+    } catch (err) {
+      lastErr = err;
+      if (attempt === retries || !isRetryableStartError(err)) throw err;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  throw lastErr;
+}
+
+function wakeApi() {
+  fetch(`${BASE_URL}/health`).catch(() => {});
+}
+
+wakeApi();
+setInterval(() => {
+  const quizScreen = document.getElementById("quiz-screen");
+  const resultScreen = document.getElementById("result-screen");
+  if (quizScreen && !quizScreen.classList.contains("hidden")) return;
+  if (resultScreen && !resultScreen.classList.contains("hidden")) return;
+  wakeApi();
+}, WAKE_INTERVAL_MS);
 
 function normalizeRoll(raw) {
   const digits = String(raw || "").trim().replace(/\D/g, "");
@@ -114,11 +150,15 @@ async function startQuizProcess() {
   if (retryBtn) retryBtn.classList.add("hidden");
 
   try {
-    const response = await fetchWithTimeout(`${BASE_URL}/start-quiz`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: studentName, roll: studentRoll }),
-    });
+    const response = await fetchWithRetry(
+      `${BASE_URL}/start-quiz`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: studentName, roll: studentRoll }),
+      },
+      START_RETRIES
+    );
     let payload = {};
     try {
       payload = await response.json();
