@@ -1,5 +1,5 @@
 /* ===================== CONFIG ===================== */
-const BASE_URL = "https://sig-ip-quiz.onrender.com";
+const BASE_URL = window.location.origin;
 const FETCH_TIMEOUT_MS = 45_000;
 const START_RETRIES = 2;
 const WAKE_INTERVAL_MS = 4 * 60 * 1000;
@@ -10,6 +10,7 @@ const ROLL_ONE_DIGIT_PREFIXES = { 6: "06", 7: "07", 8: "08", 9: "09" };
 /* ===================== STATE ===================== */
 let studentName = "";
 let studentRoll = "";
+let sessionToken = "";
 let quizData = [];
 let userAnswers = [];
 let currentIdx = 0;
@@ -214,6 +215,8 @@ function openQuizFromServer(payload) {
   pendingQuestionSeconds = Number.isFinite(Number(payload.questionSecondsLeft))
     ? Number(payload.questionSecondsLeft)
     : QUESTION_SECONDS;
+  sessionToken = String(payload.sessionToken || "");
+  if (!sessionToken) throw new Error("Invalid quiz session. Please restart the quiz.");
 
   document.getElementById("setup-screen").classList.add("hidden");
   document.getElementById("quiz-screen").classList.remove("hidden");
@@ -227,6 +230,7 @@ function saveProgress() {
     body: JSON.stringify({
       name: studentName,
       roll: studentRoll,
+      sessionToken,
       currentIdx,
       answers: userAnswers.filter((a) => a && a.id != null),
     }),
@@ -367,6 +371,7 @@ async function submitQuiz() {
   const payload = {
     name: studentName,
     roll: studentRoll,
+    sessionToken,
     answers: userAnswers.filter((a) => a && a.id != null),
     timeTaken: timeTaken,
   };

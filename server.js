@@ -1,6 +1,7 @@
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
@@ -54,6 +55,9 @@ app.use(cors({
 app.use(limiter);
 app.use(express.json({ limit: "2mb" }));
 app.use(express.text({ type: ["text/csv", "text/plain"], limit: "2mb" }));
+app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "index.html")));
+app.get("/script.js", (_req, res) => res.sendFile(path.join(__dirname, "script.js")));
+app.get("/file1.png", (_req, res) => res.sendFile(path.join(__dirname, "file1.png")));
 
 let questionCache = [];
 let cacheTimer = null;
@@ -99,6 +103,17 @@ function requireAdmin(req, res, next) {
   const secret = req.get("X-Admin-Secret");
   if (!secret || secret !== process.env.ADMIN_SECRET) {
     return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  function createSessionToken() {
+    return crypto.randomBytes(32).toString("hex");
+  }
+
+  function hasSessionToken(row, token) {
+    if (!row.session_token || typeof token !== "string") return false;
+    const expected = Buffer.from(row.session_token);
+    const actual = Buffer.from(token);
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
   }
   next();
 }
@@ -283,7 +298,7 @@ async function refreshQuestionCache() {
 async function findAttemptsByRoll(normalized) {
   const { rows } = await pool.query(
     `SELECT id, roll, name, score, total, time_taken, submitted_at, answers,
-            status, started_at, deadline_at, question_ids, progress
+            status, started_at, deadline_at, session_token, question_ids, progress
      FROM attempts
      WHERE ${ROLL_CANONICAL_SQL} = $1
      ORDER BY submitted_at DESC`,
@@ -475,6 +490,7 @@ function quizPayload(row, extra) {
     answers: extra.answers,
     questionSecondsLeft: extra.questionSecondsLeft,
     quizSecondsLeft: extra.quizSecondsLeft,
+    sessionToken: extra.sessionToken,
     startedAt: row.started_at ? new Date(row.started_at).toISOString() : new Date().toISOString(),
     resumed: extra.resumed,
   };
@@ -584,6 +600,11 @@ app.post(
         const ids = parseQuestionIds(row.question_ids);
         const applied = applyAwayTime(parseProgress(row.progress), ids, row.deadline_at);
         applied.progress.name = safeName || applied.progress.name || row.name;
+        const sessionToken = createSessionToken();
+        await pool.query("UPDATE attempts SET session_token = $2 WHERE id = $1", [
+          row.id,
+          sessionToken,
+        ]);
         await persistProgress(row.id, applied.progress);
 
         if (applied.timedOut) {
@@ -603,6 +624,7 @@ app.post(
               answers: applied.progress.answers,
               questionSecondsLeft: applied.questionSecondsLeft,
               quizSecondsLeft: applied.quizSecondsLeft,
+              sessionToken,
               resumed: true,
             }
           )
@@ -619,6 +641,7 @@ app.post(
       }
       const now = new Date();
       const deadline = new Date(now.getTime() + ids.length * QUESTION_SECONDS * 1000);
+      const sessionToken = createSessionToken();
       const progress = {
         currentIdx: 0,
         answers: new Array(ids.length).fill(null),
@@ -632,18 +655,35 @@ app.post(
           `UPDATE attempts
            SET roll = $2, name = $3, score = NULL, total = NULL, time_taken = NULL, answers = NULL,
                status = 'in_progress', started_at = $4, deadline_at = $5,
-               question_ids = $6::jsonb, progress = $7::jsonb, submitted_at = $4
+               session_token = $6, question_ids = $7::jsonb, progress = $8::jsonb, submitted_at = $4
            WHERE id = $1
            RETURNING id, roll, name, status, started_at, deadline_at, question_ids, progress`,
-          [row.id, safeRoll, safeName, now, deadline, JSON.stringify(ids), JSON.stringify(progress)]
+          [
+            row.id,
+            safeRoll,
+            safeName,
+            now,
+            deadline,
+            sessionToken,
+            JSON.stringify(ids),
+            JSON.stringify(progress),
+          ]
         );
         saved = updated.rows[0];
       } else {
         const inserted = await pool.query(
-          `INSERT INTO attempts (roll, name, status, started_at, deadline_at, question_ids, progress, submitted_at)
-           VALUES ($1, $2, 'in_progress', $3, $4, $5::jsonb, $6::jsonb, $3)
+          `INSERT INTO attempts (roll, name, status, started_at, deadline_at, session_token, question_ids, progress, submitted_at)
+           VALUES ($1, $2, 'in_progress', $3, $4, $5, $6::jsonb, $7::jsonb, $3)
            RETURNING id, roll, name, status, started_at, deadline_at, question_ids, progress`,
-          [safeRoll, safeName, now, deadline, JSON.stringify(ids), JSON.stringify(progress)]
+            [
+              safeRoll,
+              safeName,
+              now,
+              deadline,
+              sessionToken,
+              JSON.stringify(ids),
+              JSON.stringify(progress),
+            ]
         );
         saved = inserted.rows[0];
       }
@@ -654,6 +694,7 @@ app.post(
           answers: progress.answers,
           questionSecondsLeft: QUESTION_SECONDS,
           quizSecondsLeft: ids.length * QUESTION_SECONDS,
+          sessionToken,
           resumed: false,
         })
       );
@@ -673,6 +714,7 @@ app.post(
                     answers: applied.progress.answers,
                     questionSecondsLeft: applied.questionSecondsLeft,
                     quizSecondsLeft: applied.quizSecondsLeft,
+                    sessionToken: raced.session_token,
                     resumed: true,
                   }
                 )
@@ -692,8 +734,13 @@ app.post(
 
 app.post(
   "/save-progress",
-  [body("roll").trim().notEmpty()],
+  [body("roll").trim().notEmpty(), body("sessionToken").isHexadecimal().isLength({ min: 64, max: 64 })],
   async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: "Invalid quiz session." });
+    }
+
     const parsed = normalizeRoll(req.body.roll);
     if (parsed.error) {
       return res.status(400).json({ error: parsed.error });
@@ -704,6 +751,9 @@ app.post(
       const row = rows[0];
       if (!row || row.status !== "in_progress") {
         return res.status(403).json({ error: ALREADY_ATTEMPTED });
+      }
+      if (!hasSessionToken(row, req.body.sessionToken)) {
+        return res.status(403).json({ error: "Invalid quiz session." });
       }
 
       const ids = parseQuestionIds(row.question_ids);
@@ -741,6 +791,7 @@ app.post(
   [
     body("name").trim(),
     body("roll").trim().notEmpty(),
+    body("sessionToken").isHexadecimal().isLength({ min: 64, max: 64 }),
     body("answers").isArray(),
     body("timeTaken").isString(),
   ],
@@ -765,6 +816,9 @@ app.post(
       const row = rows[0];
       if (!row) {
         return res.status(403).json({ error: "No quiz session. Start the quiz first." });
+      }
+      if (!hasSessionToken(row, req.body.sessionToken)) {
+        return res.status(403).json({ error: "Invalid quiz session." });
       }
 
       if (row.status === "submitted") {

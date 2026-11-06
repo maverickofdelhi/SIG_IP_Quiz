@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS attempts (
   status TEXT NOT NULL DEFAULT 'submitted',
   started_at TIMESTAMPTZ,
   deadline_at TIMESTAMPTZ,
+  session_token TEXT,
   question_ids JSONB,
   progress JSONB
 );
@@ -31,8 +32,12 @@ CREATE TABLE IF NOT EXISTS attempts (
 ALTER TABLE attempts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'submitted';
 ALTER TABLE attempts ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
 ALTER TABLE attempts ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ;
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS session_token TEXT;
 ALTER TABLE attempts ADD COLUMN IF NOT EXISTS question_ids JSONB;
 ALTER TABLE attempts ADD COLUMN IF NOT EXISTS progress JSONB;
 
 CREATE INDEX IF NOT EXISTS attempts_submitted_at_idx ON attempts (submitted_at);
 CREATE INDEX IF NOT EXISTS attempts_status_idx ON attempts (status);
+CREATE UNIQUE INDEX IF NOT EXISTS attempts_session_token_uidx
+  ON attempts (session_token)
+  WHERE session_token IS NOT NULL;
