@@ -83,6 +83,7 @@ function rowToCachedQuestion(row) {
 }
 
 function normalizeQuestionPayload(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
   const question = String(item.question || "").trim();
   const option_a = String(item.option_a ?? item.A ?? "").trim();
   const option_b = String(item.option_b ?? item.B ?? "").trim();
@@ -104,18 +105,18 @@ function requireAdmin(req, res, next) {
   if (!secret || secret !== process.env.ADMIN_SECRET) {
     return res.status(401).json({ error: "Unauthorized" });
   }
-
-  function createSessionToken() {
-    return crypto.randomBytes(32).toString("hex");
-  }
-
-  function hasSessionToken(row, token) {
-    if (!row.session_token || typeof token !== "string") return false;
-    const expected = Buffer.from(row.session_token);
-    const actual = Buffer.from(token);
-    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
-  }
   next();
+}
+
+function createSessionToken() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function hasSessionToken(row, token) {
+  if (!row.session_token || typeof token !== "string") return false;
+  const expected = Buffer.from(row.session_token);
+  const actual = Buffer.from(token);
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
 function csvEscape(value) {
@@ -520,6 +521,9 @@ async function ensureCanonicalRollIndex() {
 app.get("/health", async (_req, res) => {
   try {
     await pool.query("SELECT 1");
+    if (questionCache.length === 0) {
+      return res.status(503).json({ ok: false, error: "No active questions available" });
+    }
     res.json({
       ok: true,
       questionsCached: questionCache.length,
