@@ -6,6 +6,7 @@ const WAKE_INTERVAL_MS = 4 * 60 * 1000;
 const QUESTION_SECONDS = 30;
 const ROLL_TWO_DIGIT_PREFIXES = ["20", "19", "34", "35"];
 const ROLL_ONE_DIGIT_PREFIXES = { 6: "06", 7: "07", 8: "08", 9: "09" };
+const SESSION_TOKEN_KEY = "sig-ip-quiz-session-token";
 
 /* ===================== STATE ===================== */
 let studentName = "";
@@ -143,6 +144,7 @@ async function startQuizProcess() {
   }
 
   studentRoll = parsedRoll.roll;
+  const savedSessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY);
 
   document.getElementById("registration-screen").classList.add("hidden");
   document.getElementById("setup-screen").classList.remove("hidden");
@@ -156,7 +158,11 @@ async function startQuizProcess() {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: studentName, roll: studentRoll }),
+        body: JSON.stringify({
+          name: studentName,
+          roll: studentRoll,
+          sessionToken: savedSessionToken || undefined,
+        }),
       },
       START_RETRIES
     );
@@ -217,6 +223,7 @@ function openQuizFromServer(payload) {
     : QUESTION_SECONDS;
   sessionToken = String(payload.sessionToken || "");
   if (!sessionToken) throw new Error("Invalid quiz session. Please restart the quiz.");
+  sessionStorage.setItem(SESSION_TOKEN_KEY, sessionToken);
 
   document.getElementById("setup-screen").classList.add("hidden");
   document.getElementById("quiz-screen").classList.remove("hidden");
@@ -391,6 +398,7 @@ async function submitQuiz() {
     }
 
     if (response.ok && (result.success || result.alreadySubmitted)) {
+      sessionStorage.removeItem(SESSION_TOKEN_KEY);
       document.getElementById("setup-screen").classList.add("hidden");
       document.getElementById("result-screen").classList.remove("hidden");
       return;

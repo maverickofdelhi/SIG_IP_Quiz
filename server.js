@@ -591,6 +591,13 @@ app.post(
 
     const safeName = String(req.body.name || "").trim();
     const safeRoll = parsed.roll;
+    const requestedSessionToken = req.body.sessionToken;
+    if (
+      requestedSessionToken != null &&
+      !/^[0-9a-f]{64}$/i.test(String(requestedSessionToken))
+    ) {
+      return res.status(400).json({ error: "Invalid quiz session." });
+    }
 
     try {
       const rows = await findAttemptsByRoll(parsed);
@@ -601,14 +608,14 @@ app.post(
       const row = rows[0];
 
       if (row && row.status === "in_progress") {
+        if (!hasSessionToken(row, requestedSessionToken)) {
+          return res.status(403).json({
+            error: "This quiz is already open in another session.",
+          });
+        }
         const ids = parseQuestionIds(row.question_ids);
         const applied = applyAwayTime(parseProgress(row.progress), ids, row.deadline_at);
         applied.progress.name = safeName || applied.progress.name || row.name;
-        const sessionToken = createSessionToken();
-        await pool.query("UPDATE attempts SET session_token = $2 WHERE id = $1", [
-          row.id,
-          sessionToken,
-        ]);
         await persistProgress(row.id, applied.progress);
 
         if (applied.timedOut) {
@@ -628,7 +635,7 @@ app.post(
               answers: applied.progress.answers,
               questionSecondsLeft: applied.questionSecondsLeft,
               quizSecondsLeft: applied.quizSecondsLeft,
-              sessionToken,
+              sessionToken: row.session_token,
               resumed: true,
             }
           )
