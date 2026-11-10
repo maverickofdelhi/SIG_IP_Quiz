@@ -5,11 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SIG-IP Quiz</title>
     <style>
-        :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; background: #f4f6fa; font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+        :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; background: #0f172a; font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
         * { box-sizing: border-box; }
-        body { display: grid; min-height: 100vh; margin: 0; padding: 32px 20px; place-items: center; background: radial-gradient(ellipse at 10% 0%, #e8efff 0, transparent 34%), #f4f6fa; }
+        body { display: grid; min-height: 100vh; margin: 0; padding: 100px 20px 32px; place-items: center; background: #0f172a; }
         button, input { font: inherit; }
-        #header { display: none; }
+        #header { position: fixed; z-index: 2; top: 0; right: 0; display: flex; width: auto; height: 88px; padding: 8px 20px; justify-content: flex-end; }
+        #header > div { height: 100%; }
+        #z { display: block; height: 100%; width: auto; object-fit: contain; }
         #quiz-container { width: min(100%, 960px); max-width: 960px; padding: 0; overflow: hidden; border: 1px solid #e5e9f1; border-radius: 24px; background: #fff; box-shadow: 0 24px 70px rgb(22 34 58 / 9%); text-align: left; animation: arrive .45s ease-out both; }
         @keyframes arrive { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         #registration-screen { display: grid; grid-template-columns: 1.08fr .92fr; min-height: 520px; text-align: left; }
@@ -64,14 +66,14 @@
         #leaderboard { margin-top: 24px; padding-top: 20px; border-top: 1px solid #edf0f5; text-align: left; }
         #leaderboard h3 { margin: 0 0 12px; color: #25334a; font-size: 17px; }
         #leaderboard-list { padding-left: 23px; color: #58657c; font-size: 13px; line-height: 1.9; }
-        @media (max-width: 700px) { body { padding: 16px; } #registration-screen { grid-template-columns: 1fr; } .welcome-copy { padding: 34px 28px 26px; } .brand { margin-bottom: 34px; } .welcome-copy h1 { font-size: 39px; } .lead { margin: 13px 0 22px; } .registration-panel { padding: 28px; border-top: 1px solid #edf0f5; border-left: 0; } #quiz-screen, #setup-screen, #result-screen { padding: 28px 22px; } #question-text { font-size: 21px; } }
-        @media (max-width: 380px) { body { padding: 10px; } .welcome-copy, .registration-panel { padding-right: 20px; padding-left: 20px; } .fact + .fact { padding-left: 10px; } .fact strong { font-size: 16px; } }
+        @media (max-width: 700px) { body { padding: 82px 16px 16px; } #header { height: 68px; padding: 6px 14px; } #registration-screen { grid-template-columns: 1fr; } .welcome-copy { padding: 34px 28px 26px; } .brand { margin-bottom: 34px; } .welcome-copy h1 { font-size: 39px; } .lead { margin: 13px 0 22px; } .registration-panel { padding: 28px; border-top: 1px solid #edf0f5; border-left: 0; } #quiz-screen, #setup-screen, #result-screen { padding: 28px 22px; } #question-text { font-size: 21px; } }
+        @media (max-width: 380px) { body { padding: 76px 10px 10px; } .welcome-copy, .registration-panel { padding-right: 20px; padding-left: 20px; } .fact + .fact { padding-left: 10px; } .fact strong { font-size: 16px; } }
         @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
     </style>
 </head>
 <body>
     <div id="header">
-        <div id="y"><img src="file1.png" id="z" alt=""></div>
+        <div id="y"><img src="file1.png" id="z" alt="SIG-IP logo"></div>
     </div>
 
     <div id="quiz-container">
