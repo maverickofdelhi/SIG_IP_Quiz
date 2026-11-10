@@ -23,6 +23,7 @@ let pendingQuestionSeconds = null;
 let startInFlight = false;
 let submitInFlight = false;
 let answerLocked = false;
+let progressSaveQueue = Promise.resolve();
 
 /* ===================== TIMER ===================== */
 let timer = null;
@@ -65,7 +66,15 @@ async function fetchWithRetry(url, options, retries) {
 }
 
 function wakeApi() {
-  fetch(`${BASE_URL}/health`).catch(() => {});
+  fetch(`${BASE_URL}/health`).then((response) => response.json()).then((data) => {
+    if (data.questionsCached) {
+      const count = Math.min(10, Number(data.questionsCached));
+      const instruction = document.getElementById("instruction-questions");
+      if (instruction) instruction.textContent = `${count} questions · ${Math.ceil(count * QUESTION_SECONDS / 60)} minutes maximum`;
+      const timing = document.getElementById("instruction-time");
+      if (timing) timing.textContent = `30 seconds per question · ${Math.ceil(count * QUESTION_SECONDS / 60)} minutes total`;
+    }
+  }).catch(() => {});
 }
 
 wakeApi();
@@ -202,6 +211,11 @@ function openQuizFromServer(payload) {
     throw new Error("No data");
   }
 
+  const instruction = document.getElementById("instruction-questions");
+  if (instruction) instruction.textContent = `${quizData.length} questions · ${Math.ceil(quizData.length * QUESTION_SECONDS / 60)} minutes maximum`;
+  const timing = document.getElementById("instruction-time");
+  if (timing) timing.textContent = `30 seconds per question · ${Math.ceil(quizData.length * QUESTION_SECONDS / 60)} minutes total`;
+
   currentIdx = Math.max(0, Number(payload.currentIdx) || 0);
   answerLocked = false;
   submitInFlight = false;
@@ -233,17 +247,19 @@ function openQuizFromServer(payload) {
 }
 
 function saveProgress() {
-  fetchWithTimeout(`${BASE_URL}/save-progress`, {
+  const body = JSON.stringify({
+    name: studentName,
+    roll: studentRoll,
+    sessionToken,
+    currentIdx,
+    answers: userAnswers.filter((a) => a && a.id != null),
+  });
+  progressSaveQueue = progressSaveQueue.catch(() => {}).then(() => fetchWithTimeout(`${BASE_URL}/save-progress`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name: studentName,
-      roll: studentRoll,
-      sessionToken,
-      currentIdx,
-      answers: userAnswers.filter((a) => a && a.id != null),
-    }),
-  }).catch(() => {});
+    body,
+  })).catch(() => {});
+  return progressSaveQueue;
 }
 
 /* ===================== STEP 3: LOAD QUESTION ===================== */
@@ -301,7 +317,9 @@ function loadQuestion() {
 
     if (timeLeft <= 0) {
       clearInterval(timer);
-      recordAnswer(-1);
+      const selected = document.querySelector("#options-container .option-btn.selected");
+      const previous = userAnswers[currentIdx];
+      recordAnswer(selected ? Number(selected.dataset.idx) : previous ? Number(previous.selected) : -1);
     }
   }, 1000);
 
@@ -311,15 +329,42 @@ function loadQuestion() {
     btn.className = "option-btn";
     btn.innerText = opt;
     btn.dataset.idx = String(idx);
+    if (userAnswers[currentIdx] && Number(userAnswers[currentIdx].selected) === idx) {
+      btn.classList.add("selected");
+      nextBtn.style.display = "block";
+    }
     btn.onclick = () => {
       if (answerLocked) return;
       optionsContainer.querySelectorAll(".option-btn").forEach((b) => b.classList.remove("selected"));
       btn.classList.add("selected");
+      saveCurrentSelection();
+      saveProgress();
       nextBtn.disabled = false;
       nextBtn.style.display = "block";
     };
     optionsContainer.appendChild(btn);
   });
+  document.getElementById("back-btn").disabled = currentIdx === 0;
+}
+
+function previousQuestion() {
+  if (currentIdx <= 0 || answerLocked) return;
+  saveCurrentSelection();
+  clearInterval(timer);
+  currentIdx -= 1;
+  pendingQuestionSeconds = Math.min(QUESTION_SECONDS, remainingQuizSeconds());
+  saveProgress();
+  loadQuestion();
+}
+
+function saveCurrentSelection() {
+  const selectedBtn = document.querySelector("#options-container .option-btn.selected");
+  if (selectedBtn && quizData[currentIdx] && quizData[currentIdx].id != null) {
+    userAnswers[currentIdx] = {
+      id: quizData[currentIdx].id,
+      selected: Number(selectedBtn.dataset.idx),
+    };
+  }
 }
 
 function nextQuestion() {
@@ -330,6 +375,8 @@ function nextQuestion() {
     if (nextBtn) nextBtn.disabled = false;
     return;
   }
+
+  if (currentIdx === quizData.length - 1 && !confirm("Submit your quiz now? You won't be able to change your answers after submission.")) return;
 
   if (nextBtn) nextBtn.disabled = true;
   const choiceIdx = parseInt(selectedBtn.dataset.idx, 10);
@@ -362,6 +409,7 @@ function recordAnswer(choiceIdx) {
 /* ===================== STEP 4: SUBMIT & GRADE ===================== */
 async function submitQuiz() {
   if (submitInFlight) return;
+  if (!document.getElementById("quiz-screen").classList.contains("hidden")) saveCurrentSelection();
   submitInFlight = true;
 
   clearInterval(timer);
@@ -403,6 +451,7 @@ async function submitQuiz() {
       sessionStorage.removeItem(SESSION_TOKEN_KEY);
       document.getElementById("setup-screen").classList.add("hidden");
       document.getElementById("result-screen").classList.remove("hidden");
+      renderResults(result);
       return;
     }
 
@@ -421,4 +470,32 @@ async function submitQuiz() {
     if (retryBtn) retryBtn.classList.remove("hidden");
     submitInFlight = false;
   }
+}
+
+function renderResults(result) {
+  document.getElementById("score-summary").innerText = `You scored ${Number(result.score) || 0} out of ${Number(result.total) || quizData.length}. Green answers are correct; red answers show the correct answer.`;
+  const review = document.getElementById("review-list");
+  review.innerHTML = "";
+  (Array.isArray(result.details) ? result.details : []).forEach((item, index) => {
+    const card = document.createElement("article");
+    card.className = `review-item ${item.status === "CORRECT" ? "correct" : "wrong"}`;
+    const question = document.createElement("strong");
+    question.textContent = `Q${index + 1}. ${item.q}`;
+    const yourAnswer = document.createElement("p");
+    yourAnswer.textContent = `Your answer: ${item.chosen}`;
+    const correct = document.createElement("p");
+    correct.textContent = `Correct answer: ${item.correct}`;
+    card.append(question, yourAnswer, correct);
+    review.appendChild(card);
+  });
+  fetchWithTimeout(`${BASE_URL}/leaderboard`).then((response) => response.json()).then((data) => {
+    const list = document.getElementById("leaderboard-list");
+    list.innerHTML = "";
+    (data.entries || []).forEach((entry) => {
+      const item = document.createElement("li");
+      item.textContent = `${entry.name} — ${entry.score}/${entry.total}`;
+      list.appendChild(item);
+    });
+    if (!list.children.length) list.innerHTML = "<li>No scores yet.</li>";
+  }).catch(() => { document.getElementById("leaderboard-list").innerHTML = "<li>Leaderboard is temporarily unavailable.</li>"; });
 }

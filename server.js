@@ -366,15 +366,14 @@ function clientQuestionsForIds(ids) {
 function mergeLockedAnswers(existingAnswers, incoming, questionIds) {
   const merged = questionIds.map((_id, idx) => {
     const prev = Array.isArray(existingAnswers) ? existingAnswers[idx] : null;
-    if (prev && prev.id != null) return { id: Number(prev.id), selected: Number(prev.selected) };
-    return null;
+    return prev && prev.id != null ? { id: Number(prev.id), selected: Number(prev.selected) } : null;
   });
 
   const incomingList = Array.isArray(incoming) ? incoming : [];
   incomingList.forEach((ans) => {
     if (!ans || ans.id == null) return;
     const slot = questionIds.findIndex((id) => Number(id) === Number(ans.id));
-    if (slot < 0 || merged[slot]) return;
+    if (slot < 0) return;
     merged[slot] = { id: Number(questionIds[slot]), selected: Number(ans.selected) };
   });
   return merged;
@@ -781,8 +780,8 @@ app.post(
       const existing = parseProgress(row.progress);
       existing.answers = mergeLockedAnswers(existing.answers, req.body.answers, ids);
       const incomingIdx = Number(req.body.currentIdx);
-      if (Number.isFinite(incomingIdx) && incomingIdx > (existing.currentIdx || 0)) {
-        existing.currentIdx = Math.min(ids.length, incomingIdx);
+      if (Number.isInteger(incomingIdx) && incomingIdx >= 0 && incomingIdx <= ids.length && incomingIdx !== (existing.currentIdx || 0)) {
+        existing.currentIdx = incomingIdx;
         existing.questionStartedAt = new Date().toISOString();
       }
       if (req.body.name) existing.name = String(req.body.name).trim();
@@ -844,20 +843,24 @@ app.post(
 
       if (row.status === "submitted") {
         if (isSubmittedCooldownActive(row)) {
-          return res.json({ success: true, alreadySubmitted: true });
+          const saved = row.answers || {};
+          return res.json({ success: true, alreadySubmitted: true, score: row.score, total: row.total, details: saved.details || [] });
         }
         return res.status(403).json({ error: "No quiz session. Start the quiz first." });
       }
 
       const ids = parseQuestionIds(row.question_ids);
       const existing = parseProgress(row.progress);
-      const mergedAnswers = mergeLockedAnswers(existing.answers, req.body.answers, ids);
+      const deadlinePassed = row.deadline_at && Date.now() >= new Date(row.deadline_at).getTime();
+      const mergedAnswers = mergeLockedAnswers(existing.answers, deadlinePassed ? [] : req.body.answers, ids);
       await finalizeAttempt(
         { ...row, progress: { ...existing, answers: mergedAnswers, name: safeName } },
         mergedAnswers,
         safeName
       );
-      res.json({ success: true });
+      const finalized = (await findAttemptsByRoll(parsed))[0];
+      const saved = finalized.answers || {};
+      res.json({ success: true, score: finalized.score, total: finalized.total, details: saved.details || [] });
     } catch (err) {
       if (err && err.code === "23505") {
         return res.status(403).json({ error: ALREADY_ATTEMPTED });
@@ -867,6 +870,20 @@ app.post(
     }
   }
 );
+
+app.get("/leaderboard", async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT name, score, total, time_taken FROM attempts
+       WHERE status = 'submitted' AND score IS NOT NULL
+       ORDER BY score DESC, submitted_at ASC LIMIT 100`
+    );
+    res.json({ entries: rows.map((row, index) => ({ rank: index + 1, name: row.name || "Student", score: row.score, total: row.total, timeTaken: row.time_taken })) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not load the leaderboard." });
+  }
+});
 
 app.post("/admin/questions", requireAdmin, async (req, res) => {
   const incoming = parseAdminQuestionBody(req.body);

@@ -38,6 +38,9 @@ ALTER TABLE attempts ADD COLUMN IF NOT EXISTS progress JSONB;
 
 CREATE INDEX IF NOT EXISTS attempts_submitted_at_idx ON attempts (submitted_at);
 CREATE INDEX IF NOT EXISTS attempts_status_idx ON attempts (status);
+CREATE INDEX IF NOT EXISTS attempts_leaderboard_idx
+  ON attempts (score DESC, submitted_at ASC)
+  WHERE status = 'submitted' AND score IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS attempts_session_token_uidx
   ON attempts (session_token)
   WHERE session_token IS NOT NULL;
