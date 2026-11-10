@@ -65,14 +65,22 @@ async function fetchWithRetry(url, options, retries) {
   throw lastErr;
 }
 
+function quizDurationLabel(questionCount) {
+  const seconds = questionCount * QUESTION_SECONDS;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes && remainder) return `${minutes}m ${remainder}s`;
+  return minutes ? `${minutes} min` : `${seconds} sec`;
+}
+
 function wakeApi() {
   fetch(`${BASE_URL}/health`).then((response) => response.json()).then((data) => {
     if (data.questionsCached) {
       const count = Math.min(10, Number(data.questionsCached));
       const instruction = document.getElementById("instruction-questions");
-      if (instruction) instruction.textContent = `${count} questions · ${Math.ceil(count * QUESTION_SECONDS / 60)} minutes maximum`;
+      if (instruction) instruction.textContent = String(count);
       const timing = document.getElementById("instruction-time");
-      if (timing) timing.textContent = `30 seconds per question · ${Math.ceil(count * QUESTION_SECONDS / 60)} minutes total`;
+      if (timing) timing.textContent = quizDurationLabel(count);
     }
   }).catch(() => {});
 }
@@ -212,9 +220,9 @@ function openQuizFromServer(payload) {
   }
 
   const instruction = document.getElementById("instruction-questions");
-  if (instruction) instruction.textContent = `${quizData.length} questions · ${Math.ceil(quizData.length * QUESTION_SECONDS / 60)} minutes maximum`;
+  if (instruction) instruction.textContent = String(quizData.length);
   const timing = document.getElementById("instruction-time");
-  if (timing) timing.textContent = `30 seconds per question · ${Math.ceil(quizData.length * QUESTION_SECONDS / 60)} minutes total`;
+  if (timing) timing.textContent = quizDurationLabel(quizData.length);
 
   currentIdx = Math.max(0, Number(payload.currentIdx) || 0);
   answerLocked = false;
