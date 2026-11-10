@@ -24,6 +24,7 @@ let startInFlight = false;
 let submitInFlight = false;
 let answerLocked = false;
 let progressSaveQueue = Promise.resolve();
+let leaderboardRequestInFlight = false;
 
 /* ===================== TIMER ===================== */
 let timer = null;
@@ -86,6 +87,81 @@ function wakeApi() {
 }
 
 wakeApi();
+loadLeaderboard();
+setInterval(() => {
+  if (!document.hidden) loadLeaderboard();
+}, 5000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) loadLeaderboard();
+});
+
+function showPlatformTab(tab) {
+  const showLeaderboard = tab === "leaderboard";
+  document.getElementById("leaderboard-screen").classList.toggle("hidden", !showLeaderboard);
+  document.getElementById("quiz-area").classList.toggle("hidden", showLeaderboard);
+  document.getElementById("leaderboard-tab").setAttribute("aria-selected", String(showLeaderboard));
+  document.getElementById("quiz-tab").setAttribute("aria-selected", String(!showLeaderboard));
+  document.getElementById("leaderboard-tab").tabIndex = showLeaderboard ? 0 : -1;
+  document.getElementById("quiz-tab").tabIndex = showLeaderboard ? -1 : 0;
+  if (showLeaderboard) loadLeaderboard();
+}
+
+document.querySelector(".platform-tabs").addEventListener("keydown", (event) => {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const selected = document.getElementById("leaderboard-tab").getAttribute("aria-selected") === "true" ? "leaderboard" : "quiz";
+  const tab = event.key === "Home" ? "leaderboard" : event.key === "End" ? "quiz" :
+    event.key === "ArrowRight" ? (selected === "leaderboard" ? "quiz" : "leaderboard") : (selected === "quiz" ? "leaderboard" : "quiz");
+  const button = document.getElementById(`${tab}-tab`);
+  button.focus();
+  button.click();
+});
+
+async function loadLeaderboard() {
+  if (leaderboardRequestInFlight) return;
+  leaderboardRequestInFlight = true;
+  try {
+    const response = await fetchWithTimeout(`${BASE_URL}/leaderboard`, { cache: "no-store", timeoutMs: 8000 });
+    if (!response.ok) throw new Error("Leaderboard unavailable");
+    const payload = await response.json();
+    const list = document.getElementById("leaderboard-list");
+    list.replaceChildren();
+    (Array.isArray(payload.entries) ? payload.entries.slice(0, 10) : []).forEach((entry, index) => {
+      const rank = Number(entry.rank) || index + 1;
+      const row = document.createElement("li");
+      row.className = rank <= 3 ? `leaderboard-row podium place-${rank}` : "leaderboard-row";
+      const rankLabel = document.createElement("span");
+      rankLabel.className = "leaderboard-rank";
+      rankLabel.textContent = String(rank).padStart(2, "0");
+      const name = document.createElement("span");
+      name.className = "leaderboard-name";
+      name.textContent = entry.name || "Student";
+      const score = document.createElement("span");
+      score.className = "leaderboard-score";
+      score.textContent = `${Number(entry.score) || 0} pts`;
+      row.append(rankLabel, name, score);
+      list.appendChild(row);
+    });
+    if (!list.children.length) {
+      const empty = document.createElement("li");
+      empty.className = "leaderboard-empty";
+      empty.textContent = "—";
+      list.appendChild(empty);
+    }
+  } catch (err) {
+    console.error(err);
+    const list = document.getElementById("leaderboard-list");
+    if (!list.children.length) {
+      const empty = document.createElement("li");
+      empty.className = "leaderboard-empty";
+      empty.textContent = "—";
+      list.appendChild(empty);
+    }
+  } finally {
+    leaderboardRequestInFlight = false;
+  }
+}
+
 setInterval(() => {
   const quizScreen = document.getElementById("quiz-screen");
   const resultScreen = document.getElementById("result-screen");
@@ -496,14 +572,5 @@ function renderResults(result) {
     card.append(question, yourAnswer, correct);
     review.appendChild(card);
   });
-  fetchWithTimeout(`${BASE_URL}/leaderboard`).then((response) => response.json()).then((data) => {
-    const list = document.getElementById("leaderboard-list");
-    list.innerHTML = "";
-    (data.entries || []).forEach((entry) => {
-      const item = document.createElement("li");
-      item.textContent = `${entry.name} — ${entry.score}/${entry.total}`;
-      list.appendChild(item);
-    });
-    if (!list.children.length) list.innerHTML = "<li>No scores yet.</li>";
-  }).catch(() => { document.getElementById("leaderboard-list").innerHTML = "<li>Leaderboard is temporarily unavailable.</li>"; });
+  loadLeaderboard();
 }
