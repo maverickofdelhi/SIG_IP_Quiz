@@ -295,6 +295,22 @@ async function seedQuestionsIfEmpty() {
   }
 }
 
+async function seedCumulativeScoresFromExistingAttempts() {
+  await pool.query(
+    `INSERT INTO cumulative_scores (roll, name, total_score, quizzes_completed, last_quiz_at, updated_at)
+     SELECT ${ROLL_CANONICAL_SQL},
+            COALESCE((ARRAY_AGG(name ORDER BY submitted_at DESC))[1], 'Student'),
+            SUM(score)::bigint,
+            COUNT(*)::int,
+            MAX(submitted_at),
+            NOW()
+     FROM attempts
+     WHERE status = 'submitted' AND score IS NOT NULL
+     GROUP BY ${ROLL_CANONICAL_SQL}
+     ON CONFLICT (roll) DO NOTHING`
+  );
+}
+
 async function refreshQuestionCache() {
   const { rows } = await pool.query(
     `SELECT id, question, option_a, option_b, option_c, option_d, correct
@@ -459,27 +475,54 @@ async function finalizeAttempt(row, answers, name) {
   const elapsedSec = Math.max(0, Math.floor((Date.now() - started) / 1000));
   const safeName = String(name || progress.name || row.name || "").trim();
 
-  await pool.query(
-    `UPDATE attempts
-     SET status = 'submitted',
-         name = $2,
-         score = $3,
-         total = $4,
-         time_taken = $5,
-         answers = $6::jsonb,
-         submitted_at = NOW(),
-         progress = $7::jsonb
-     WHERE id = $1`,
-    [
-      row.id,
-      safeName,
-      score,
-      total,
-      `${elapsedSec}s`,
-      JSON.stringify({ submitted, details: detailsLog }),
-      JSON.stringify({ currentIdx: ids.length, answers: submitted, name: safeName }),
-    ]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const finalized = await client.query(
+      `UPDATE attempts
+       SET status = 'submitted',
+           name = $2,
+           score = $3,
+           total = $4,
+           time_taken = $5,
+           answers = $6::jsonb,
+           submitted_at = NOW(),
+           progress = $7::jsonb
+       WHERE id = $1 AND status = 'in_progress'
+       RETURNING roll`,
+      [
+        row.id,
+        safeName,
+        score,
+        total,
+        `${elapsedSec}s`,
+        JSON.stringify({ submitted, details: detailsLog }),
+        JSON.stringify({ currentIdx: ids.length, answers: submitted, name: safeName }),
+      ]
+    );
+
+    if (finalized.rowCount > 0) {
+      const canonicalRoll = String(finalized.rows[0].roll || "").replace(/\D/g, "").replace(/^0+/, "");
+      await client.query(
+        `INSERT INTO cumulative_scores AS current_score
+           (roll, name, total_score, quizzes_completed, last_quiz_at, updated_at)
+         VALUES ($1, $2, $3, 1, NOW(), NOW())
+         ON CONFLICT (roll) DO UPDATE
+         SET name = EXCLUDED.name,
+             total_score = current_score.total_score + EXCLUDED.total_score,
+             quizzes_completed = current_score.quizzes_completed + 1,
+             last_quiz_at = NOW(),
+             updated_at = NOW()`,
+        [canonicalRoll, safeName || "Student", score]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 function isSubmittedCooldownActive(row) {
@@ -873,12 +916,17 @@ app.post(
 
 app.get("/leaderboard", async (_req, res) => {
   try {
+    res.set("Cache-Control", "no-store");
     const { rows } = await pool.query(
-      `SELECT name, score, total, time_taken FROM attempts
-       WHERE status = 'submitted' AND score IS NOT NULL
-       ORDER BY score DESC, submitted_at ASC LIMIT 100`
+      `SELECT ROW_NUMBER() OVER (
+                ORDER BY total_score DESC, quizzes_completed DESC, updated_at ASC, name ASC
+              )::int AS rank,
+              name, total_score AS score
+       FROM cumulative_scores
+       ORDER BY total_score DESC, quizzes_completed DESC, updated_at ASC, name ASC
+       LIMIT 10`
     );
-    res.json({ entries: rows.map((row, index) => ({ rank: index + 1, name: row.name || "Student", score: row.score, total: row.total, timeTaken: row.time_taken })) });
+    res.json({ entries: rows });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Could not load the leaderboard." });
@@ -974,6 +1022,7 @@ async function boot() {
   await applySchema();
   await ensureCanonicalRollIndex();
   await seedQuestionsIfEmpty();
+  await seedCumulativeScoresFromExistingAttempts();
   await refreshQuestionCache();
   cacheTimer = setInterval(() => {
     refreshQuestionCache().catch((err) => console.error("Cache refresh failed:", err));

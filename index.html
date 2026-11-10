@@ -63,10 +63,30 @@
         .review-item.wrong { border-left-color: #d26565; }
         .review-item strong { color: #25334a; }
         .review-item p { margin: 9px 0 0; color: #657187; font-size: 13px; }
-        #leaderboard { margin-top: 24px; padding-top: 20px; border-top: 1px solid #edf0f5; text-align: left; }
-        #leaderboard h3 { margin: 0 0 12px; color: #25334a; font-size: 17px; }
-        #leaderboard-list { padding-left: 23px; color: #58657c; font-size: 13px; line-height: 1.9; }
+        .platform-tabs { display: flex; gap: 30px; padding: 0 44px; border-bottom: 1px solid #edf0f5; }
+        .platform-tab { position: relative; min-height: 56px; padding: 0 2px; border: 0; background: transparent; color: #8791a3; cursor: pointer; font-size: 13px; font-weight: 650; }
+        .platform-tab[aria-selected="true"] { color: #24334d; }
+        .platform-tab[aria-selected="true"]::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: #315fd3; content: ""; }
+        #leaderboard-screen { padding: 38px 44px 42px; }
+        #leaderboard-title { margin: 0; color: #1e2c43; font-size: 26px; font-weight: 680; letter-spacing: -.045em; }
+        #leaderboard-list { display: grid; max-width: 800px; margin: 22px auto 0; padding: 0; list-style: none; }
+        .leaderboard-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; align-items: center; min-height: 52px; padding: 0 16px; border-bottom: 1px solid #eef0f4; color: #4b5870; font-size: 14px; }
+        .leaderboard-rank { color: #8993a5; font-variant-numeric: tabular-nums; font-size: 13px; }
+        .leaderboard-name { overflow: hidden; color: #35435b; font-weight: 520; text-overflow: ellipsis; white-space: nowrap; }
+        .leaderboard-score { padding-left: 16px; color: #35435b; font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; }
+        .leaderboard-row.podium { min-height: 64px; margin-bottom: 5px; border: 1px solid #ece8df; border-radius: 9px; background: #faf9f6; }
+        .leaderboard-row.podium .leaderboard-rank { font-size: 16px; font-weight: 750; }
+        .leaderboard-row.podium .leaderboard-name { color: #26344c; font-size: 15px; font-weight: 680; }
+        .leaderboard-row.podium .leaderboard-score { color: #26344c; font-size: 14px; }
+        .leaderboard-row.place-1 { border-color: #e8dfca; background: #faf8f2; }
+        .leaderboard-row.place-1 .leaderboard-rank { color: #9b793d; }
+        .leaderboard-row.place-2 .leaderboard-rank { color: #7f8999; }
+        .leaderboard-row.place-3 .leaderboard-rank { color: #9b7052; }
+        .leaderboard-empty { min-height: 52px; color: #9aa3b1; text-align: center; }
+        .result-actions { display: flex; gap: 12px; margin-top: 18px; }
+        .result-actions button { flex: 1; }
         @media (max-width: 700px) { body { padding: 82px 16px 16px; } #header { height: 68px; padding: 6px 14px; } #registration-screen { grid-template-columns: 1fr; } .welcome-copy { padding: 34px 28px 26px; } .brand { margin-bottom: 34px; } .welcome-copy h1 { font-size: 39px; } .lead { margin: 13px 0 22px; } .registration-panel { padding: 28px; border-top: 1px solid #edf0f5; border-left: 0; } #quiz-screen, #setup-screen, #result-screen { padding: 28px 22px; } #question-text { font-size: 21px; } }
+        @media (max-width: 700px) { .platform-tabs { gap: 24px; padding: 0 24px; } #leaderboard-screen { padding: 30px 22px; } #leaderboard-title { font-size: 23px; } .leaderboard-row { grid-template-columns: 40px minmax(0, 1fr) auto; padding: 0 10px; } .leaderboard-row.podium { min-height: 58px; } .leaderboard-score { padding-left: 8px; } }
         @media (max-width: 380px) { body { padding: 76px 10px 10px; } .welcome-copy, .registration-panel { padding-right: 20px; padding-left: 20px; } .fact + .fact { padding-left: 10px; } .fact strong { font-size: 16px; } }
         @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
     </style>
@@ -77,6 +97,17 @@
     </div>
 
     <div id="quiz-container">
+        <nav class="platform-tabs" role="tablist" aria-label="Platform sections">
+            <button class="platform-tab" id="leaderboard-tab" type="button" role="tab" tabindex="0" aria-selected="true" aria-controls="leaderboard-screen" onclick="showPlatformTab('leaderboard')">Top 10</button>
+            <button class="platform-tab" id="quiz-tab" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="quiz-area" onclick="showPlatformTab('quiz')">Quiz</button>
+        </nav>
+
+        <section id="leaderboard-screen" role="tabpanel" aria-labelledby="leaderboard-tab">
+            <h1 id="leaderboard-title">Top 10 Rankings</h1>
+            <ol id="leaderboard-list" aria-live="polite" aria-label="Top 10 participant scores"></ol>
+        </section>
+
+        <main id="quiz-area" class="hidden" role="tabpanel" aria-labelledby="quiz-tab">
         <div id="registration-screen">
             <section class="welcome-copy" aria-labelledby="welcome-title">
                 <div class="brand"><span class="brand-mark" aria-hidden="true">SI</span><span>SIG-IP &nbsp;/&nbsp; Learning</span></div>
@@ -118,9 +149,9 @@
             <h2>Quiz complete</h2>
             <p id="score-summary">Your responses have been recorded.</p>
             <div id="review-list"></div>
-            <section id="leaderboard"><h3>Leaderboard</h3><ol id="leaderboard-list"><li>Loading scores…</li></ol></section>
-            <button onclick="location.reload()" class="primary-btn">Done</button>
+            <div class="result-actions"><button class="secondary-btn" type="button" onclick="showPlatformTab('leaderboard')">Top 10 rankings</button><button onclick="location.reload()" class="primary-btn">Done</button></div>
         </div>
+        </main>
     </div>
 
     <script src="script.js"></script>

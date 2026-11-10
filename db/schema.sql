@@ -29,6 +29,15 @@ CREATE TABLE IF NOT EXISTS attempts (
   progress JSONB
 );
 
+CREATE TABLE IF NOT EXISTS cumulative_scores (
+  roll TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  total_score BIGINT NOT NULL DEFAULT 0,
+  quizzes_completed INT NOT NULL DEFAULT 0,
+  last_quiz_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 ALTER TABLE attempts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'submitted';
 ALTER TABLE attempts ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
 ALTER TABLE attempts ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ;
@@ -38,9 +47,8 @@ ALTER TABLE attempts ADD COLUMN IF NOT EXISTS progress JSONB;
 
 CREATE INDEX IF NOT EXISTS attempts_submitted_at_idx ON attempts (submitted_at);
 CREATE INDEX IF NOT EXISTS attempts_status_idx ON attempts (status);
-CREATE INDEX IF NOT EXISTS attempts_leaderboard_idx
-  ON attempts (score DESC, submitted_at ASC)
-  WHERE status = 'submitted' AND score IS NOT NULL;
+CREATE INDEX IF NOT EXISTS cumulative_scores_ranking_idx
+  ON cumulative_scores (total_score DESC, quizzes_completed DESC, updated_at ASC);
 CREATE UNIQUE INDEX IF NOT EXISTS attempts_session_token_uidx
   ON attempts (session_token)
   WHERE session_token IS NOT NULL;
