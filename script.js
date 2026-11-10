@@ -230,6 +230,7 @@ async function startQuizProcess() {
   studentRoll = parsedRoll.roll;
   const savedSessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY);
 
+  document.getElementById("leaderboard-disclosure").classList.add("hidden");
   document.getElementById("registration-screen").classList.add("hidden");
   document.getElementById("setup-screen").classList.remove("hidden");
   document.getElementById("setup-text").innerText = "Starting quiz...";
@@ -524,6 +525,9 @@ async function submitQuiz() {
       sessionStorage.removeItem(SESSION_TOKEN_KEY);
       document.getElementById("setup-screen").classList.add("hidden");
       document.getElementById("result-screen").classList.remove("hidden");
+      const leaderboard = document.getElementById("leaderboard-disclosure");
+      leaderboard.classList.remove("hidden");
+      leaderboard.open = true;
       renderResults(result);
       return;
     }

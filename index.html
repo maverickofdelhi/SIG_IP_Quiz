@@ -16,8 +16,6 @@
         @keyframes arrive { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         #registration-screen { display: grid; grid-template-columns: 1.08fr .92fr; text-align: left; }
         .welcome-copy { display: flex; flex-direction: column; justify-content: center; padding: 40px 44px; }
-        .brand { display: inline-flex; align-items: center; gap: 10px; margin-bottom: 30px; color: #58647a; font-size: 12px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
-        .brand-mark { display: grid; width: 34px; height: 34px; border-radius: 11px; background: #e9efff; color: #315fd3; font-size: 13px; letter-spacing: -.04em; place-items: center; }
         .eyebrow { margin: 0 0 10px; color: #4166c5; font-size: 11px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
         .welcome-copy h1 { max-width: 440px; margin: 0; color: #18243a; font-size: clamp(36px, 5vw, 50px); font-weight: 680; letter-spacing: -.055em; line-height: 1.08; }
         .lead { max-width: 390px; margin: 14px 0 22px; color: #69758a; font-size: 14px; line-height: 1.6; }
@@ -63,18 +61,23 @@
         .review-item.wrong { border-left-color: #d26565; }
         .review-item strong { color: #25334a; }
         .review-item p { margin: 9px 0 0; color: #657187; font-size: 13px; }
-        .leaderboard-disclosure { margin: 0 36px 20px; border-top: 1px solid #edf0f5; }
-        .leaderboard-disclosure summary { display: flex; min-height: 48px; align-items: center; justify-content: space-between; color: #6e7b90; cursor: pointer; font-size: 13px; font-weight: 650; list-style: none; }
+        #answer-review { margin-top: 14px; border-top: 1px solid #edf0f5; text-align: left; }
+        #answer-review summary { display: flex; min-height: 44px; align-items: center; justify-content: space-between; color: #6e7b90; cursor: pointer; font-size: 12px; font-weight: 650; list-style: none; }
+        #answer-review summary::-webkit-details-marker { display: none; }
+        #answer-review summary::after { content: "+"; color: #73819a; font-size: 18px; font-weight: 400; }
+        #answer-review[open] summary::after { content: "−"; }
+        .leaderboard-disclosure { margin: 0 36px 16px; border-top: 1px solid #edf0f5; }
+        .leaderboard-disclosure summary { display: flex; min-height: 44px; align-items: center; justify-content: space-between; color: #6e7b90; cursor: pointer; font-size: 12px; font-weight: 650; list-style: none; }
         .leaderboard-disclosure summary::-webkit-details-marker { display: none; }
         .leaderboard-disclosure summary::after { color: #73819a; content: "+"; font-size: 20px; font-weight: 400; }
         .leaderboard-disclosure[open] summary::after { content: "−"; }
         #leaderboard-screen { padding: 8px 0 20px; }
-        #leaderboard-list { display: grid; max-width: 800px; margin: 12px auto 0; padding: 0; list-style: none; }
-        .leaderboard-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; align-items: center; min-height: 42px; padding: 0 14px; border-bottom: 1px solid #eef0f4; color: #4b5870; font-size: 13px; }
+        #leaderboard-list { display: grid; max-width: 800px; margin: 8px auto 0; padding: 0; list-style: none; }
+        .leaderboard-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; align-items: center; min-height: 36px; padding: 0 14px; border-bottom: 1px solid #eef0f4; color: #4b5870; font-size: 13px; }
         .leaderboard-rank { color: #8993a5; font-variant-numeric: tabular-nums; font-size: 13px; }
         .leaderboard-name { overflow: hidden; color: #35435b; font-weight: 520; text-overflow: ellipsis; white-space: nowrap; }
         .leaderboard-score { padding-left: 16px; color: #35435b; font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; }
-        .leaderboard-row.podium { min-height: 52px; margin-bottom: 4px; border: 1px solid #ece8df; border-radius: 8px; background: #faf9f6; }
+        .leaderboard-row.podium { min-height: 44px; margin-bottom: 3px; border: 1px solid #ece8df; border-radius: 8px; background: #faf9f6; }
         .leaderboard-row.podium .leaderboard-rank { font-size: 16px; font-weight: 750; }
         .leaderboard-row.podium .leaderboard-name { color: #26344c; font-size: 15px; font-weight: 680; }
         .leaderboard-row.podium .leaderboard-score { color: #26344c; font-size: 14px; }
@@ -82,10 +85,10 @@
         .leaderboard-row.place-1 .leaderboard-rank { color: #9b793d; }
         .leaderboard-row.place-2 .leaderboard-rank { color: #7f8999; }
         .leaderboard-row.place-3 .leaderboard-rank { color: #9b7052; }
-        .leaderboard-empty { min-height: 42px; color: #9aa3b1; text-align: center; }
+        .leaderboard-empty { min-height: 36px; color: #9aa3b1; text-align: center; }
         .result-actions { display: flex; gap: 10px; margin-top: 14px; }
         .result-actions button { flex: 1; }
-        @media (max-width: 700px) { body { place-items: start center; padding: 70px 14px 12px; } #header { height: 60px; padding: 5px 12px; } #quiz-container { border-radius: 16px; } #registration-screen { grid-template-columns: 1fr; } .welcome-copy { padding: 22px 24px 16px; } .brand { margin-bottom: 18px; } .brand-mark { width: 29px; height: 29px; } .eyebrow { margin-bottom: 7px; } .welcome-copy h1 { max-width: 500px; font-size: clamp(30px, 8vw, 36px); } .lead { margin: 9px 0 15px; font-size: 13px; line-height: 1.45; } .quiz-facts { padding: 12px 0; } .fact + .fact { padding-left: 14px; } .fact strong { font-size: 16px; } .how-it-works { gap: 7px 14px; margin-top: 11px; font-size: 11px; } .registration-panel { padding: 20px 24px 22px; border-top: 1px solid #edf0f5; border-left: 0; } .registration-panel h2 { font-size: 21px; } .panel-copy { margin: 6px 0 13px; } .field { margin-bottom: 9px; } .field span { margin-bottom: 5px; } input, .primary-btn, #next-btn, .secondary-btn { min-height: 43px; height: 43px; } #quiz-screen, #setup-screen, #result-screen { padding: 22px 18px; } #timer { margin-bottom: 12px; } #question-counter { margin: 4px 0; } #question-text { margin: 10px 0 14px; font-size: 20px; } .option-btn { margin: 7px 0; padding: 11px 12px; } .nav-row { gap: 8px; margin-top: 12px; } .leaderboard-disclosure { margin: 0 22px 14px; } #leaderboard-screen { padding: 4px 0 12px; } .leaderboard-row { grid-template-columns: 38px minmax(0, 1fr) auto; min-height: 38px; padding: 0 8px; } .leaderboard-row.podium { min-height: 48px; margin-bottom: 3px; } .leaderboard-score { padding-left: 8px; } .review-item { margin: 7px 0; padding: 12px; } }
+        @media (max-width: 700px) { body { place-items: start center; padding: 70px 14px 12px; } #header { height: 60px; padding: 5px 12px; } #quiz-container { border-radius: 16px; } #registration-screen { grid-template-columns: 1fr; } .welcome-copy { padding: 20px 24px 14px; } .eyebrow { margin-bottom: 6px; } .welcome-copy h1 { max-width: 500px; font-size: clamp(30px, 8vw, 36px); } .lead { margin: 8px 0 12px; font-size: 13px; line-height: 1.4; } .quiz-facts { padding: 10px 0; } .fact + .fact { padding-left: 14px; } .fact strong { font-size: 16px; } .how-it-works { gap: 7px 14px; margin-top: 9px; font-size: 11px; } .registration-panel { padding: 18px 24px 20px; border-top: 1px solid #edf0f5; border-left: 0; } .registration-panel h2 { font-size: 21px; } .panel-copy { margin: 5px 0 11px; } .field { margin-bottom: 8px; } .field span { margin-bottom: 4px; } input, .primary-btn, #next-btn, .secondary-btn { min-height: 42px; height: 42px; } #quiz-screen, #setup-screen, #result-screen { padding: 20px 18px; } #timer { margin-bottom: 10px; } #question-counter { margin: 3px 0; } #question-text { margin: 8px 0 12px; font-size: 19px; } .option-btn { margin: 6px 0; padding: 10px 11px; } .nav-row { gap: 8px; margin-top: 10px; } .leaderboard-disclosure { margin: 0 22px 12px; } #leaderboard-screen { padding: 2px 0 10px; } .leaderboard-row { grid-template-columns: 38px minmax(0, 1fr) auto; min-height: 33px; padding: 0 8px; } .leaderboard-row.podium { min-height: 40px; margin-bottom: 2px; } .leaderboard-score { padding-left: 8px; } #answer-review { margin-top: 10px; } #answer-review summary { min-height: 40px; } .review-item { margin: 6px 0; padding: 10px; } .result-actions { gap: 8px; margin-top: 10px; } }
         @media (max-width: 380px) { body { padding: 64px 9px 9px; } .welcome-copy, .registration-panel { padding-right: 18px; padding-left: 18px; } .fact + .fact { padding-left: 9px; } .fact strong { font-size: 15px; } .fact span { font-size: 10px; } .how-it-works { column-gap: 9px; font-size: 10px; } }
         @media (max-height: 700px) and (min-width: 701px) { body { place-items: start center; padding-top: 86px; } .welcome-copy, .registration-panel { padding-top: 28px; padding-bottom: 28px; } #quiz-screen, #setup-screen, #result-screen { padding-top: 24px; padding-bottom: 24px; } }
         @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
@@ -100,10 +103,9 @@
         <main id="quiz-area">
         <div id="registration-screen">
             <section class="welcome-copy" aria-labelledby="welcome-title">
-                <div class="brand"><span class="brand-mark" aria-hidden="true">SI</span><span>SIG-IP &nbsp;/&nbsp; Learning</span></div>
-                <p class="eyebrow">Knowledge check</p>
-                <h1 id="welcome-title">A little focus goes a long way.</h1>
-                <p class="lead">Settle in for a short quiz. You can revisit and change your answers before you submit.</p>
+                <p class="eyebrow">THE QUIZ</p>
+                <h1 id="welcome-title">A short, focused challenge.</h1>
+                <p class="lead">Choose your answers, then review before submitting.</p>
                 <div class="quiz-facts" aria-label="Quiz details">
                     <div class="fact"><strong id="instruction-questions">10</strong><span>questions</span></div>
                     <div class="fact"><strong id="instruction-time">5 min</strong><span>total time</span></div>
@@ -112,8 +114,8 @@
                 <div class="how-it-works"><span>30 seconds per question</span><span>No negative marking</span></div>
             </section>
             <section class="registration-panel" aria-labelledby="registration-title">
-                <h2 id="registration-title">Ready when you are.</h2>
-                <p class="panel-copy">Enter your details to get started. Your name appears on the leaderboard.</p>
+                <h2 id="registration-title">Your details</h2>
+                <p class="panel-copy">Your name appears on the leaderboard.</p>
                 <label class="field" for="student-name"><span>Full name</span><input type="text" id="student-name" placeholder="e.g. Alex Morgan" autocomplete="name" required></label>
                 <label class="field" for="student-roll"><span>Roll number</span><input type="text" id="student-roll" placeholder="Your roll number" required autocomplete="off" inputmode="numeric"></label>
                 <button class="primary-btn" id="start-btn" onclick="startQuizProcess()">Start quiz <span aria-hidden="true">&rarr;</span></button>
@@ -138,7 +140,10 @@
         <div id="result-screen" class="hidden">
             <h2>Quiz complete</h2>
             <p id="score-summary">Your responses have been recorded.</p>
-            <div id="review-list"></div>
+            <details id="answer-review">
+                <summary>Review answers</summary>
+                <div id="review-list"></div>
+            </details>
             <div class="result-actions"><button class="secondary-btn" type="button" onclick="openLeaderboard()">Top 10 rankings</button><button onclick="location.reload()" class="primary-btn">Done</button></div>
         </div>
         </main>
