@@ -95,26 +95,15 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) loadLeaderboard();
 });
 
-function showPlatformTab(tab) {
-  const showLeaderboard = tab === "leaderboard";
-  document.getElementById("leaderboard-screen").classList.toggle("hidden", !showLeaderboard);
-  document.getElementById("quiz-area").classList.toggle("hidden", showLeaderboard);
-  document.getElementById("leaderboard-tab").setAttribute("aria-selected", String(showLeaderboard));
-  document.getElementById("quiz-tab").setAttribute("aria-selected", String(!showLeaderboard));
-  document.getElementById("leaderboard-tab").tabIndex = showLeaderboard ? 0 : -1;
-  document.getElementById("quiz-tab").tabIndex = showLeaderboard ? -1 : 0;
-  if (showLeaderboard) loadLeaderboard();
+function openLeaderboard() {
+  const disclosure = document.getElementById("leaderboard-disclosure");
+  disclosure.open = true;
+  loadLeaderboard();
+  disclosure.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-document.querySelector(".platform-tabs").addEventListener("keydown", (event) => {
-  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-  event.preventDefault();
-  const selected = document.getElementById("leaderboard-tab").getAttribute("aria-selected") === "true" ? "leaderboard" : "quiz";
-  const tab = event.key === "Home" ? "leaderboard" : event.key === "End" ? "quiz" :
-    event.key === "ArrowRight" ? (selected === "leaderboard" ? "quiz" : "leaderboard") : (selected === "quiz" ? "leaderboard" : "quiz");
-  const button = document.getElementById(`${tab}-tab`);
-  button.focus();
-  button.click();
+document.getElementById("leaderboard-disclosure").addEventListener("toggle", (event) => {
+  if (event.currentTarget.open) loadLeaderboard();
 });
 
 async function loadLeaderboard() {
