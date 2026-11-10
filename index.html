@@ -196,6 +196,21 @@
         }
         
         #z { height: 100%; }
+        #quiz-container { max-width: 680px; text-align: left; }
+        #registration-screen, #setup-screen, #result-screen { text-align: center; }
+        .instructions { background:#f1f5f9; border-radius:14px; padding:18px; margin:18px 0; color:#334155; }
+        .instructions ul { padding-left:22px; line-height:1.8; }
+        .nav-row { display:flex; gap:12px; margin-top:16px; }
+        .nav-row button { flex:1; }
+        .secondary-btn { background:#e2e8f0; color:#1e293b; border:0; padding:12px; border-radius:10px; cursor:pointer; font-weight:600; }
+        #question-counter { color:#64748b; font-weight:600; margin:8px 0; }
+        #review-list { text-align:left; margin:20px 0; }
+        .review-item { background:#f8fafc; border-radius:12px; padding:14px; margin:10px 0; border-left:4px solid #cbd5e1; }
+        .review-item.correct { border-color:#10b981; }
+        .review-item.wrong { border-color:#ef4444; }
+        #leaderboard { text-align:left; margin-top:24px; border-top:1px solid #e2e8f0; padding-top:18px; }
+        #leaderboard-list { padding-left:24px; line-height:1.9; color:#334155; }
+        @media(max-width:560px) { #quiz-container { padding:26px 20px; } #header { height:65px; } }
     </style>
 </head>
 <body>
@@ -206,7 +221,8 @@
     <div id="quiz-container">
         <div id="registration-screen">
             <h2>SIG-IP Quiz</h2>
-            <p>Enter your details to begin</p>
+            <p>Show what you know. Review your answers before you finish.</p>
+            <div class="instructions"><strong>Before you begin</strong><ul><li id="instruction-questions">Loading quiz details…</li><li id="instruction-time">30 seconds per question, with a maximum of 5 minutes</li><li>1 point for each correct answer; no penalty for incorrect or skipped answers</li><li>You can go back and change answers before submitting</li></ul></div>
             <input type="text" id="student-name" placeholder="Full Name" required>
             <input type="text" id="student-roll" placeholder="Roll Number" required autocomplete="off" inputmode="numeric">
             <button class="primary-btn" id="start-btn" onclick="startQuizProcess()">Start Quiz</button>
@@ -224,13 +240,15 @@
             <div id="question-counter"></div>
             <h3 id="question-text"></h3>
             <div id="options-container"></div>
-            <button id="next-btn" onclick="nextQuestion()">Next Question</button>
+            <div class="nav-row"><button class="secondary-btn" id="back-btn" onclick="previousQuestion()">← Previous</button><button id="next-btn" onclick="nextQuestion()">Next Question</button></div>
         </div>
 
         <div id="result-screen" class="hidden">
-            <h2>Thank You!</h2>
-            <p>Your responses have been recorded.</p>
-            <button onclick="location.reload()" class="primary-btn">Restart Quiz</button>
+            <h2>Quiz complete</h2>
+            <p id="score-summary">Your responses have been recorded.</p>
+            <div id="review-list"></div>
+            <section id="leaderboard"><h3>Leaderboard</h3><ol id="leaderboard-list"><li>Loading scores…</li></ol></section>
+            <button onclick="location.reload()" class="primary-btn">Done</button>
         </div>
     </div>
 
