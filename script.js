@@ -1,7 +1,11 @@
 /* ===================== CONFIG ===================== */
-const BASE_URL = window.location.hostname.endsWith(".vercel.app")
-  ? "https://sig-ip-quiz.onrender.com"
-  : window.location.origin;
+const hostname = window.location.hostname;
+const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(hostname)
+  || hostname.endsWith(".local")
+  || /^10\./.test(hostname)
+  || /^192\.168\./.test(hostname)
+  || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname);
+const BASE_URL = isLocalHost ? window.location.origin : "https://sig-ip-quiz.onrender.com";
 const FETCH_TIMEOUT_MS = 45_000;
 const START_RETRIES = 2;
 const WAKE_INTERVAL_MS = 4 * 60 * 1000;
@@ -9,6 +13,7 @@ const QUESTION_SECONDS = 30;
 const ROLL_TWO_DIGIT_PREFIXES = ["20", "19", "34", "35"];
 const ROLL_ONE_DIGIT_PREFIXES = { 6: "06", 7: "07", 8: "08", 9: "09" };
 const SESSION_TOKEN_KEY = "sig-ip-quiz-session-token";
+const SESSION_ROLL_KEY = "sig-ip-quiz-session-roll";
 
 /* ===================== STATE ===================== */
 let studentName = "";
@@ -25,6 +30,7 @@ let submitInFlight = false;
 let answerLocked = false;
 let progressSaveQueue = Promise.resolve();
 let leaderboardRequestInFlight = false;
+let leaderboardRetryTimer = null;
 
 /* ===================== TIMER ===================== */
 let timer = null;
@@ -50,6 +56,12 @@ async function fetchWithTimeout(url, options = {}) {
 function isRetryableStartError(err) {
   const msg = String((err && err.message) || "");
   return /timed out|network|failed to fetch|connection failed/i.test(msg);
+}
+
+function createClientSessionToken() {
+  const bytes = new Uint8Array(32);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function fetchWithRetry(url, options, retries) {
@@ -89,18 +101,13 @@ function wakeApi() {
 wakeApi();
 loadLeaderboard();
 setInterval(() => {
-  if (!document.hidden) loadLeaderboard();
-}, 5000);
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) loadLeaderboard();
-});
-
-function openLeaderboard() {
   const disclosure = document.getElementById("leaderboard-disclosure");
-  disclosure.open = true;
-  loadLeaderboard();
-  disclosure.scrollIntoView({ behavior: "smooth", block: "start" });
-}
+  if (!document.hidden && disclosure && disclosure.open) loadLeaderboard();
+}, 30000);
+document.addEventListener("visibilitychange", () => {
+  const disclosure = document.getElementById("leaderboard-disclosure");
+  if (!document.hidden && disclosure && disclosure.open) loadLeaderboard();
+});
 
 document.getElementById("leaderboard-disclosure").addEventListener("toggle", (event) => {
   if (event.currentTarget.open) loadLeaderboard();
@@ -110,12 +117,33 @@ async function loadLeaderboard() {
   if (leaderboardRequestInFlight) return;
   leaderboardRequestInFlight = true;
   try {
-    const response = await fetchWithTimeout(`${BASE_URL}/leaderboard`, { cache: "no-store", timeoutMs: 8000 });
-    if (!response.ok) throw new Error("Leaderboard unavailable");
-    const payload = await response.json();
+    let payload;
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await fetchWithTimeout(`${BASE_URL}/leaderboard`, { cache: "no-store", timeoutMs: 15000 });
+        if (response.status === 429) {
+          lastError = new Error("Leaderboard refresh was rate limited");
+          break;
+        }
+        if (!response.ok) throw new Error(`Leaderboard request failed (${response.status})`);
+        payload = await response.json();
+        if (!payload || !Array.isArray(payload.entries)) throw new Error("Leaderboard response was invalid");
+        lastError = null;
+        break;
+      } catch (err) {
+        lastError = err;
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
+      }
+    }
+    if (lastError) throw lastError;
+
     const list = document.getElementById("leaderboard-list");
-    list.replaceChildren();
-    (Array.isArray(payload.entries) ? payload.entries.slice(0, 10) : []).forEach((entry, index) => {
+    if (leaderboardRetryTimer) {
+      clearTimeout(leaderboardRetryTimer);
+      leaderboardRetryTimer = null;
+    }
+    const rows = payload.entries.slice(0, 10).map((entry, index) => {
       const rank = Number(entry.rank) || index + 1;
       const row = document.createElement("li");
       row.className = rank <= 3 ? `leaderboard-row podium place-${rank}` : "leaderboard-row";
@@ -129,22 +157,29 @@ async function loadLeaderboard() {
       score.className = "leaderboard-score";
       score.textContent = `${Number(entry.score) || 0} pts`;
       row.append(rankLabel, name, score);
-      list.appendChild(row);
+      return row;
     });
-    if (!list.children.length) {
+    list.replaceChildren(...rows);
+    if (!rows.length) {
       const empty = document.createElement("li");
-      empty.className = "leaderboard-empty";
-      empty.textContent = "—";
+      empty.className = "leaderboard-status";
+      empty.textContent = "No scores yet. Be the first to complete the quiz.";
       list.appendChild(empty);
     }
   } catch (err) {
-    console.error(err);
+    console.warn("Leaderboard refresh failed:", err);
     const list = document.getElementById("leaderboard-list");
-    if (!list.children.length) {
-      const empty = document.createElement("li");
-      empty.className = "leaderboard-empty";
-      empty.textContent = "—";
-      list.appendChild(empty);
+    if (!list.querySelector(".leaderboard-row")) {
+      const status = document.createElement("li");
+      status.className = "leaderboard-status error";
+      status.textContent = "Rankings are unavailable right now. Retrying automatically.";
+      list.replaceChildren(status);
+    }
+    if (!leaderboardRetryTimer) {
+      leaderboardRetryTimer = setTimeout(() => {
+        leaderboardRetryTimer = null;
+        if (!document.hidden) loadLeaderboard();
+      }, 30000);
     }
   } finally {
     leaderboardRequestInFlight = false;
@@ -229,6 +264,12 @@ async function startQuizProcess() {
 
   studentRoll = parsedRoll.roll;
   const savedSessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY);
+  const savedSessionRoll = sessionStorage.getItem(SESSION_ROLL_KEY);
+  const startSessionToken = savedSessionToken && (!savedSessionRoll || savedSessionRoll === studentRoll)
+    ? savedSessionToken
+    : createClientSessionToken();
+  sessionStorage.setItem(SESSION_TOKEN_KEY, startSessionToken);
+  sessionStorage.setItem(SESSION_ROLL_KEY, studentRoll);
 
   document.getElementById("leaderboard-disclosure").classList.add("hidden");
   document.getElementById("registration-screen").classList.add("hidden");
@@ -246,7 +287,7 @@ async function startQuizProcess() {
         body: JSON.stringify({
           name: studentName,
           roll: studentRoll,
-          sessionToken: savedSessionToken || undefined,
+          sessionToken: startSessionToken,
         }),
       },
       START_RETRIES
@@ -358,6 +399,11 @@ function loadQuestion() {
 
   document.getElementById("question-text").innerText = `Q${currentIdx + 1}: ${q.question}`;
   document.getElementById("question-counter").innerText = `${currentIdx + 1} / ${quizData.length}`;
+  const progress = Math.round(((currentIdx + 1) / quizData.length) * 100);
+  const progressBar = document.getElementById("quiz-progress");
+  const progressTrack = progressBar && progressBar.parentElement;
+  if (progressBar) progressBar.style.width = `${progress}%`;
+  if (progressTrack) progressTrack.setAttribute("aria-valuenow", String(progress));
   const optionsContainer = document.getElementById("options-container");
   const nextBtn = document.getElementById("next-btn");
   const timerEl = document.getElementById("timer");
@@ -523,11 +569,14 @@ async function submitQuiz() {
 
     if (response.ok && (result.success || result.alreadySubmitted)) {
       sessionStorage.removeItem(SESSION_TOKEN_KEY);
+      sessionStorage.removeItem(SESSION_ROLL_KEY);
       document.getElementById("setup-screen").classList.add("hidden");
       document.getElementById("result-screen").classList.remove("hidden");
       const leaderboard = document.getElementById("leaderboard-disclosure");
       leaderboard.classList.remove("hidden");
-      leaderboard.open = true;
+      leaderboard.open = false;
+      document.getElementById("answer-review").open = true;
+      document.getElementById("result-actions").classList.remove("hidden");
       renderResults(result);
       return;
     }
@@ -550,7 +599,11 @@ async function submitQuiz() {
 }
 
 function renderResults(result) {
-  document.getElementById("score-summary").innerText = `You scored ${Number(result.score) || 0} out of ${Number(result.total) || quizData.length}. Green answers are correct; red answers show the correct answer.`;
+  const score = Number(result.score) || 0;
+  const total = Number(result.total) || quizData.length;
+  document.getElementById("result-score").innerText = `${score} / ${total}`;
+  document.getElementById("result-score-note").innerText = `${score} ${score === 1 ? "answer" : "answers"} correct`;
+  document.getElementById("score-summary").innerText = "Your answers are below. Green cards are correct; red cards show the correct answer.";
   const review = document.getElementById("review-list");
   review.innerHTML = "";
   (Array.isArray(result.details) ? result.details : []).forEach((item, index) => {

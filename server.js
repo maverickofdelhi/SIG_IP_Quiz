@@ -68,6 +68,7 @@ app.use(async (_req, _res, next) => {
 app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "index.html")));
 app.get("/script.js", (_req, res) => res.sendFile(path.join(__dirname, "script.js")));
 app.get("/file1.png", (_req, res) => res.sendFile(path.join(__dirname, "file1.png")));
+app.get("/logo_1.jpg", (_req, res) => res.sendFile(path.join(__dirname, "logo_1.jpg")));
 
 let questionCache = [];
 let cacheTimer = null;
@@ -435,8 +436,14 @@ function applyAwayTime(progress, questionIds, deadlineAt) {
   };
 }
 
-function gradeAssignedQuiz(questionIds, answers) {
-  const byId = new Map(questionCache.map((q) => [q.id, q]));
+async function gradeAssignedQuiz(questionIds, answers) {
+  const { rows } = await pool.query(
+    `SELECT id, question, option_a, option_b, option_c, option_d, correct
+     FROM questions
+     WHERE id = ANY($1::int[])`,
+    [questionIds]
+  );
+  const byId = new Map(rows.map(rowToCachedQuestion).filter(Boolean).map((q) => [q.id, q]));
   const answerById = new Map();
   (answers || []).forEach((a) => {
     if (a && a.id != null) answerById.set(Number(a.id), a);
@@ -470,7 +477,7 @@ async function finalizeAttempt(row, answers, name) {
   const ids = parseQuestionIds(row.question_ids);
   const progress = parseProgress(row.progress);
   const progressAnswers = answers || progress.answers || [];
-  const { score, total, submitted, detailsLog } = gradeAssignedQuiz(ids, progressAnswers);
+  const { score, total, submitted, detailsLog } = await gradeAssignedQuiz(ids, progressAnswers);
   const started = row.started_at ? new Date(row.started_at).getTime() : Date.now();
   const elapsedSec = Math.max(0, Math.floor((Date.now() - started) / 1000));
   const safeName = String(name || progress.name || row.name || "").trim();
@@ -704,7 +711,9 @@ app.post(
       }
       const now = new Date();
       const deadline = new Date(now.getTime() + ids.length * QUESTION_SECONDS * 1000);
-      const sessionToken = createSessionToken();
+      // Reuse the client-generated token so a retry after a lost response resumes
+      // the attempt created by the first request instead of opening a second one.
+      const sessionToken = requestedSessionToken || createSessionToken();
       const progress = {
         currentIdx: 0,
         answers: new Array(ids.length).fill(null),
